@@ -1,0 +1,61 @@
+# Python
+.venv/
+.venv-fmu/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+build/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# OS / Editor
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docker volumes / temp
+tmp/
+temp/
+
+# MinIO / local storage / generated data
+data/
+storage/
+uploads/
+
+# Grafana / Influx / DB persistence if local
+influxdb_data/
+grafana_data/
+mosquitto_data/
+mosquitto_log/
+minio_data/
+
+# Python coverage
+.coverage
+htmlcov/
+
+# React/Vite
+factory-twin-ui/node_modules/
+factory-twin-ui/dist/
+
+# Optional: ignore large model files
+*.h5
+*.pkl
+*.joblib
+*.onnx

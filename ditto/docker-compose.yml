@@ -1,0 +1,83 @@
+services:
+  ditto-mongodb:
+    image: mongo:7.0
+    container_name: ditto-mongodb
+    command: mongod --storageEngine wiredTiger --noscripting
+    networks:
+      - ditto-network
+
+  ditto-policies:
+    image: eclipse/ditto-policies:latest
+    container_name: ditto-policies
+    depends_on:
+      - ditto-mongodb
+    environment:
+      - BIND_HOSTNAME=0.0.0.0
+      - MONGO_DB_HOSTNAME=ditto-mongodb
+      - DITTO_CLUSTER_NODE_HOSTNAME=ditto-policies
+      - DITTO_CLUSTER_SEED_NODES=ditto-policies
+    networks:
+      - ditto-network
+
+  ditto-things:
+    image: eclipse/ditto-things:latest
+    container_name: ditto-things
+    depends_on:
+      - ditto-mongodb
+      - ditto-policies
+    environment:
+      - BIND_HOSTNAME=0.0.0.0
+      - MONGO_DB_HOSTNAME=ditto-mongodb
+      - DITTO_CLUSTER_NODE_HOSTNAME=ditto-things
+      - DITTO_CLUSTER_SEED_NODES=ditto-policies
+    networks:
+      - ditto-network
+
+  ditto-things-search:
+    image: eclipse/ditto-things-search:latest
+    container_name: ditto-things-search
+    depends_on:
+      - ditto-mongodb
+      - ditto-policies
+    environment:
+      - BIND_HOSTNAME=0.0.0.0
+      - MONGO_DB_HOSTNAME=ditto-mongodb
+      - DITTO_CLUSTER_NODE_HOSTNAME=ditto-things-search
+      - DITTO_CLUSTER_SEED_NODES=ditto-policies
+    networks:
+      - ditto-network
+
+  ditto-connectivity:
+    image: eclipse/ditto-connectivity:latest
+    container_name: ditto-connectivity
+    depends_on:
+      - ditto-mongodb
+      - ditto-policies
+    environment:
+      - BIND_HOSTNAME=0.0.0.0
+      - MONGO_DB_HOSTNAME=ditto-mongodb
+      - DITTO_CLUSTER_NODE_HOSTNAME=ditto-connectivity
+      - DITTO_CLUSTER_SEED_NODES=ditto-policies
+    networks:
+      - ditto-network
+
+  ditto-gateway:
+    image: eclipse/ditto-gateway:latest
+    container_name: ditto-gateway
+    depends_on:
+      - ditto-policies
+      - ditto-things
+      - ditto-things-search
+      - ditto-connectivity
+    environment:
+      - BIND_HOSTNAME=0.0.0.0
+      - DITTO_CLUSTER_NODE_HOSTNAME=ditto-gateway
+      - DITTO_CLUSTER_SEED_NODES=ditto-policies
+    ports:
+      - "8080:8080"
+    networks:
+      - ditto-network
+
+networks:
+  ditto-network:
+    driver: bridge

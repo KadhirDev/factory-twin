@@ -1,0 +1,58 @@
+# Copyright (c) 2026 Contributors to the Eclipse Foundation
+#
+# See the NOTICE file(s) distributed with this work for additional
+# information regarding copyright ownership.
+#
+# This program and the accompanying materials are made available under the
+# terms of the Eclipse Public License 2.0 which is available at
+# http://www.eclipse.org/legal/epl-2.0
+#
+# SPDX-License-Identifier: EPL-2.0
+#
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mmock
+  namespace: mmock
+  labels:
+    app.kubernetes.io/name: mmock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mmock
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mmock
+    spec:
+      volumes:
+      - name: config-volume
+        configMap:
+          defaultMode: 420
+          name: mmock-config
+      containers:
+      - name: mmock
+        image: jordimartin/mmock:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+          - containerPort: 8083
+            name: "mmock"
+        volumeMounts:
+          - mountPath: /config/
+            name: config-volume
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mmock
+  namespace: mmock
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: mmock
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8083

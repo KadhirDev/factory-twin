@@ -1,0 +1,214 @@
+services:
+  redis:
+    image: redis:7
+    container_name: factory-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+  influxdb:
+    image: influxdb:2
+    container_name: factory-influxdb
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: factory-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: factory-mosquitto
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+  zookeeper:
+    image: zookeeper:3.9
+    container_name: factory-zookeeper
+    ports:
+      - "2181:2181"
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+  kafka:
+    image: apache/kafka:3.9.2
+    container_name: factory-kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      CLUSTER_ID: 5L6g3nShT-eMCtK--X86sw
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: factory-kafka-ui
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    ports:
+      - "8088:8080"
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: factory-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: factory-grafana
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+  loki:
+    image: grafana/loki:latest
+    container_name: factory-loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+  ditto-mongodb:
+    image: mongo:7.0
+    container_name: ditto-mongodb
+    command: mongod --storageEngine wiredTiger --noscripting
+    ports:
+      - "27017:27017"
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+  ditto-policies:
+    image: eclipse/ditto-policies:latest
+    container_name: ditto-policies
+    depends_on:
+      - ditto-mongodb
+    environment:
+      BIND_HOSTNAME: 0.0.0.0
+      MONGO_DB_HOSTNAME: ditto-mongodb
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+  ditto-things:
+    image: eclipse/ditto-things:latest
+    container_name: ditto-things
+    depends_on:
+      - ditto-mongodb
+      - ditto-policies
+    environment:
+      BIND_HOSTNAME: 0.0.0.0
+      MONGO_DB_HOSTNAME: ditto-mongodb
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+  ditto-things-search:
+    image: eclipse/ditto-things-search:latest
+    container_name: ditto-things-search
+    depends_on:
+      - ditto-mongodb
+      - ditto-policies
+    environment:
+      BIND_HOSTNAME: 0.0.0.0
+      MONGO_DB_HOSTNAME: ditto-mongodb
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+  ditto-connectivity:
+    image: eclipse/ditto-connectivity:latest
+    container_name: ditto-connectivity
+    depends_on:
+      - ditto-mongodb
+      - ditto-policies
+    environment:
+      BIND_HOSTNAME: 0.0.0.0
+      MONGO_DB_HOSTNAME: ditto-mongodb
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+  ditto-gateway:
+    image: eclipse/ditto-gateway:latest
+    container_name: ditto-gateway
+    depends_on:
+      - ditto-policies
+      - ditto-things
+      - ditto-things-search
+      - ditto-connectivity
+    environment:
+      BIND_HOSTNAME: 0.0.0.0
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    networks:
+      - factory-network
+
+volumes:
+  influxdb_data:
+  minio_data:
+  mosquitto_data:
+  mosquitto_log:
+  grafana_data:
+
+networks:
+  factory-network:
+    driver: bridge
