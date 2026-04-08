@@ -1,0 +1,105 @@
+# ⚠️ SAFE — only manages factory-twin project containers
+# Does NOT touch Ditto, Kafka, Zookeeper, or Minikube
+
+version: "3.9"
+
+networks:
+  factory-net:
+    name: factory-twin-network
+    driver: bridge
+
+volumes:
+  factory-postgres-data:
+    name: factory-postgres-data
+
+services:
+
+  factory-postgres:
+    image: postgres:15-alpine
+    container_name: factory-postgres
+    networks:
+      - factory-net
+    environment:
+      POSTGRES_DB: factorytwin
+      POSTGRES_USER: factory
+      POSTGRES_PASSWORD: factory123
+    volumes:
+      - factory-postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"   # 5433 to avoid conflicts with any local postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factory -d factorytwin"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  factory-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: factory-backend
+    networks:
+      - factory-net
+    env_file:
+      - ./backend/.env
+    environment:
+      POSTGRES_HOST: factory-postgres
+    ports:
+      - "8000:8000"
+    depends_on:
+      factory-postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  factory-simulator:
+    build:
+      context: ./simulator
+      dockerfile: Dockerfile
+    container_name: factory-simulator
+    networks:
+      - factory-net
+    depends_on:
+      - factory-backend
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  factory-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: factory-frontend
+    networks:
+      - factory-net
+    ports:
+      - "5173:80"
+    depends_on:
+      - factory-backend
+    restart: unless-stopped
+
+  factory-prometheus:
+    image: prom/prometheus:latest
+    container_name: factory-prometheus
+    networks:
+      - factory-net
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9091:9090"   # 9091 to avoid conflict with other Prometheus instances
+    restart: unless-stopped
+
+  factory-grafana:
+    image: grafana/grafana:latest
+    container_name: factory-grafana
+    networks:
+      - factory-net
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin123
+    ports:
+      - "3001:3000"   # 3001 to avoid conflict
+    depends_on:
+      - factory-prometheus
+    restart: unless-stopped
