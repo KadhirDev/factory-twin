@@ -1,97 +1,201 @@
-import { useEffect, useState } from "react";
+import { useState, useCallback } from "react";
 import { getAlerts, acknowledgeAlert } from "../api/client";
+import { usePolling } from "../hooks/usePolling";
 import AlertBadge from "../components/AlertBadge";
-import { CheckCircle, RefreshCw } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
+import LiveBadge from "../components/LiveBadge";
+import { ErrorBanner } from "../components/ui/ErrorBanner";
+import { CheckCircle, AlertTriangle, Siren } from "lucide-react";
+import { formatDistanceToNow, parseISO } from "date-fns";
+
+const REFRESH_MS = 5000;
+
+const SEVERITY_FILTERS = [
+  { key: "all", label: "All" },
+  { key: "critical", label: "Critical" },
+  { key: "warning", label: "Warning" },
+  { key: "unacked", label: "Unread" },
+];
 
 export default function Alerts() {
-  const [alerts, setAlerts] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
 
-  const fetchAlerts = async () => {
-    const params = filter === "unacked" ? { unacknowledged_only: true } : {};
-    const { data } = await getAlerts(params);
-    setAlerts(data);
-    setLoading(false);
-  };
+  const buildParams = useCallback((f) => {
+    if (f === "unacked") return { unacknowledged_only: true, limit: 200 };
+    if (f === "critical") return { severity: "critical", limit: 200 };
+    if (f === "warning") return { severity: "warning", limit: 200 };
+    return { limit: 200 };
+  }, []);
 
-  useEffect(() => {
-    fetchAlerts();
-    const iv = setInterval(fetchAlerts, 5000);
-    return () => clearInterval(iv);
-  }, [filter]);
+  const fetchAlerts = useCallback(
+    () => getAlerts(buildParams(filter)).then((r) => r.data),
+    [filter, buildParams]
+  );
+
+  const {
+    data: alerts = [],
+    loading,
+    error,
+    refresh,
+  } = usePolling(fetchAlerts, REFRESH_MS, [filter]);
 
   const handleAck = async (id) => {
-    await acknowledgeAlert(id);
-    fetchAlerts();
+    try {
+      await acknowledgeAlert(id);
+      refresh();
+    } catch (e) {
+      console.error("Acknowledge failed:", e);
+    }
   };
 
+  // Stats (computed from current list)
+  const critCount = alerts.filter(
+    (a) => a.severity === "critical" && !a.acknowledged
+  ).length;
+  const warnCount = alerts.filter(
+    (a) => a.severity === "warning" && !a.acknowledged
+  ).length;
+
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">Alerts</h1>
-        <div className="flex gap-2">
-          {["all", "unacked"].map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-sm transition ${
-                filter === f ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-              }`}
-            >
-              {f === "all" ? "All" : "Unacknowledged"}
-            </button>
-          ))}
-          <button
-            onClick={fetchAlerts}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 text-gray-600 rounded-lg text-sm hover:bg-gray-200 transition"
-          >
-            <RefreshCw size={13} /> Refresh
-          </button>
+    <div className="p-6 max-w-screen-xl mx-auto">
+      {/* Header */}
+      <div className="flex items-end justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800">Alerts</h1>
+          <p className="text-sm text-gray-400 mt-0.5">{alerts.length} result(s)</p>
+        </div>
+        <LiveBadge intervalSeconds={REFRESH_MS / 1000} />
+      </div>
+
+      {/* Stats bar */}
+      <div className="grid grid-cols-2 gap-4 mb-5">
+        <div className="bg-red-50 border border-red-100 rounded-xl p-4 flex items-center gap-3">
+          <Siren size={22} className="text-red-500 shrink-0" />
+          <div>
+            <p className="text-xs text-red-400 font-medium">Unread Critical</p>
+            <p className="text-2xl font-bold text-red-600 tabular-nums">{critCount}</p>
+          </div>
+        </div>
+        <div className="bg-yellow-50 border border-yellow-100 rounded-xl p-4 flex items-center gap-3">
+          <AlertTriangle size={22} className="text-yellow-500 shrink-0" />
+          <div>
+            <p className="text-xs text-yellow-500 font-medium">Unread Warning</p>
+            <p className="text-2xl font-bold text-yellow-600 tabular-nums">{warnCount}</p>
+          </div>
         </div>
       </div>
 
-      {loading ? (
-        <div className="text-gray-400">Loading alerts...</div>
-      ) : alerts.length === 0 ? (
-        <div className="text-center text-gray-400 py-12">
-          ✅ No alerts found.
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {alerts.map((alert) => (
-            <div
-              key={alert.id}
-              className={`bg-white rounded-xl shadow border p-4 flex items-start justify-between gap-4 ${
-                alert.acknowledged ? "opacity-60" : "border-gray-100"
+      {/* Filter tabs */}
+      <div className="flex gap-2 mb-5 border-b border-gray-100 pb-3">
+        {SEVERITY_FILTERS.map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setFilter(key)}
+            className={`text-sm px-4 py-1.5 rounded-lg transition font-medium
+              ${
+                filter === key
+                  ? "bg-blue-600 text-white shadow-sm"
+                  : "text-gray-500 hover:bg-gray-100"
               }`}
-            >
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <AlertBadge severity={alert.severity} />
-                  <span className="text-sm font-medium text-gray-700">{alert.metric}</span>
-                  <span className="text-xs text-gray-400 ml-auto">
-                    {formatDistanceToNow(new Date(alert.created_at), { addSuffix: true })}
-                  </span>
-                </div>
-                <p className="text-sm text-gray-600">{alert.message}</p>
-                <p className="text-xs text-gray-400 mt-1">
-                  Value: <strong>{alert.value?.toFixed(2)}</strong> · Threshold:{" "}
-                  <strong>{alert.threshold?.toFixed(2)}</strong>
-                </p>
-              </div>
-              {!alert.acknowledged && (
-                <button
-                  onClick={() => handleAck(alert.id)}
-                  className="flex items-center gap-1.5 text-xs text-green-600 border border-green-200 px-2 py-1.5 rounded-lg hover:bg-green-50 transition whitespace-nowrap"
-                >
-                  <CheckCircle size={13} /> Acknowledge
-                </button>
-              )}
-            </div>
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="mb-4">
+          <ErrorBanner message={error} onRetry={refresh} />
+        </div>
+      )}
+
+      {/* List */}
+      {loading && alerts.length === 0 ? (
+        <div className="space-y-3">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="h-20 bg-gray-100 rounded-xl animate-pulse" />
           ))}
         </div>
+      ) : alerts.length === 0 ? (
+        <div className="text-center py-16 text-gray-400">
+          <CheckCircle size={44} className="mx-auto mb-3 opacity-30 text-green-500" />
+          <p className="font-semibold text-gray-500">No alerts</p>
+          <p className="text-sm mt-1">System is operating within thresholds.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {alerts.map((alert) => (
+            <AlertRow key={alert.id} alert={alert} onAck={handleAck} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AlertRow({ alert, onAck }) {
+  const timeAgo = formatDistanceToNow(parseISO(alert.created_at), {
+    addSuffix: true,
+  });
+
+  return (
+    <div
+      className={`bg-white rounded-xl border p-4 flex items-start gap-4 transition-opacity
+        ${
+          alert.acknowledged
+            ? "opacity-50 border-gray-100"
+            : "border-gray-200 shadow-sm"
+        }`}
+    >
+      {/* Severity indicator stripe */}
+      <div
+        className={`w-1 self-stretch rounded-full shrink-0
+          ${
+            alert.severity === "critical"
+              ? "bg-red-500"
+              : alert.severity === "warning"
+              ? "bg-yellow-400"
+              : "bg-blue-400"
+          }`}
+      />
+
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <div className="flex flex-wrap items-center gap-2 mb-1">
+          <AlertBadge severity={alert.severity} />
+          <span className="text-sm font-semibold text-gray-700 capitalize">
+            {alert.metric.replace("_", " ")}
+          </span>
+          {alert.acknowledged && (
+            <span className="text-xs text-gray-400 italic">acknowledged</span>
+          )}
+          <span className="text-xs text-gray-400 ml-auto">{timeAgo}</span>
+        </div>
+
+        <p className="text-sm text-gray-600 truncate">{alert.message}</p>
+
+        <div className="flex items-center gap-4 mt-1.5 text-xs text-gray-400">
+          <span>
+            Value: <strong className="text-gray-600">{alert.value?.toFixed(2)}</strong>
+          </span>
+          <span>
+            Threshold:{" "}
+            <strong className="text-gray-600">
+              {alert.threshold?.toFixed(2)}
+            </strong>
+          </span>
+        </div>
+      </div>
+
+      {/* Ack button */}
+      {!alert.acknowledged && (
+        <button
+          onClick={() => onAck(alert.id)}
+          className="flex items-center gap-1.5 text-xs text-green-600 border border-green-200 bg-green-50 hover:bg-green-100 px-3 py-1.5 rounded-lg transition shrink-0"
+        >
+          <CheckCircle size={13} />
+          Ack
+        </button>
       )}
     </div>
   );

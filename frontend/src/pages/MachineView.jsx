@@ -1,99 +1,225 @@
-import { useEffect, useState } from "react";
+import { useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getMachine, getTelemetryHistory, getMachineTwin } from "../api/client";
-import TelemetryChart from "../components/TelemetryChart";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { usePolling } from "../hooks/usePolling";
+import TelemetryChart, { METRIC_CONFIG } from "../components/TelemetryChart";
+import { MetricTile } from "../components/ui/MetricTile";
+import { SkeletonChart } from "../components/ui/Skeleton";
+import { ErrorBanner } from "../components/ui/ErrorBanner";
+import LiveBadge from "../components/LiveBadge";
+import StatusDot from "../components/StatusDot";
+import { ArrowLeft, ChevronDown, Terminal } from "lucide-react";
 
-const METRICS = ["temperature", "vibration", "rpm", "pressure", "power_consumption"];
+const REFRESH_MS = 3000;
+const ALL_METRICS = Object.keys(METRIC_CONFIG);
+
+// Threshold check for MetricTile coloring
+function getThresholdState(metric, value) {
+  if (value == null) return {};
+  const cfg = METRIC_CONFIG[metric];
+  if (!cfg) return {};
+
+  // oil_level: low is bad (inverted)
+  if (metric === "oil_level") {
+    return { critical: value <= 10, warn: value <= 20 };
+  }
+
+  return {
+    critical: cfg.critical != null && value >= cfg.critical,
+    warn: cfg.warn != null && value >= cfg.warn,
+  };
+}
 
 export default function MachineView() {
   const { machineId } = useParams();
-  const [machine, setMachine] = useState(null);
-  const [telemetry, setTelemetry] = useState([]);
-  const [twin, setTwin] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [selectedMetrics, setSelectedMetrics] = useState([
+    "temperature",
+    "vibration",
+    "rpm",
+  ]);
+  const [showTwin, setShowTwin] = useState(false);
 
-  const fetchAll = async () => {
-    try {
-      const [mRes, tRes] = await Promise.all([
-        getMachine(machineId),
-        getTelemetryHistory(machineId, 60),
-      ]);
-      setMachine(mRes.data);
-      setTelemetry(tRes.data);
-      try {
-        const twRes = await getMachineTwin(machineId);
-        setTwin(twRes.data);
-      } catch (_) {}
-    } finally {
-      setLoading(false);
-    }
+  // Telemetry history (primary poll)
+  const fetchTelemetry = useCallback(
+    () => getTelemetryHistory(machineId, 80).then((r) => r.data),
+    [machineId]
+  );
+
+  const {
+    data: telemetry = [],
+    loading: telLoading,
+    error: telError,
+    refresh,
+  } = usePolling(fetchTelemetry, REFRESH_MS);
+
+  // Machine metadata (slower poll)
+  const fetchMachine = useCallback(
+    () => getMachine(machineId).then((r) => r.data),
+    [machineId]
+  );
+
+  const { data: machine } = usePolling(fetchMachine, 10000);
+
+  // Ditto twin (on-demand, only when panel is open)
+  const fetchTwin = useCallback(
+    () =>
+      showTwin
+        ? getMachineTwin(machineId).then((r) => r.data)
+        : Promise.resolve(null),
+    [machineId, showTwin]
+  );
+
+  const { data: twin } = usePolling(fetchTwin, 5000, [showTwin]);
+
+  const latest = telemetry[0] ?? null;
+
+  const toggleMetric = (key) => {
+    setSelectedMetrics((prev) =>
+      prev.includes(key)
+        ? prev.length > 1
+          ? prev.filter((k) => k !== key)
+          : prev
+        : [...prev, key]
+    );
   };
 
-  useEffect(() => {
-    fetchAll();
-    const interval = setInterval(fetchAll, 3000);
-    return () => clearInterval(interval);
-  }, [machineId]);
-
-  if (loading) return <div className="p-6 text-gray-400">Loading...</div>;
-  if (!machine) return <div className="p-6 text-red-500">Machine not found.</div>;
-
-  const latest = telemetry[0];
-
   return (
-    <div className="p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <Link to="/" className="text-gray-400 hover:text-gray-600">
+    <div className="p-6 max-w-screen-xl mx-auto">
+      {/* Header */}
+      <div className="flex items-start gap-3 mb-6">
+        <Link to="/" className="text-gray-400 hover:text-gray-600 mt-1">
           <ArrowLeft size={20} />
         </Link>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">{machine.name}</h1>
-          <p className="text-sm text-gray-400">{machine.machine_id} · {machine.location}</p>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            {machine && <StatusDot status={machine.status} />}
+            <h1 className="text-2xl font-bold text-gray-800 truncate">
+              {machine?.name ?? machineId}
+            </h1>
+          </div>
+          <p className="text-sm text-gray-400 mt-0.5">
+            {machine?.machine_id} · {machine?.location ?? "—"} ·{" "}
+            <span className="capitalize">{machine?.status ?? "unknown"}</span>
+          </p>
         </div>
-        <button
-          onClick={fetchAll}
-          className="ml-auto flex items-center gap-2 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-blue-700 transition"
-        >
-          <RefreshCw size={13} /> Refresh
-        </button>
+
+        <LiveBadge intervalSeconds={REFRESH_MS / 1000} />
       </div>
 
+      {/* Error */}
+      {telError && (
+        <div className="mb-4">
+          <ErrorBanner message={telError} onRetry={refresh} />
+        </div>
+      )}
+
       {/* Latest readings */}
-      {latest && (
-        <div className="grid grid-cols-3 md:grid-cols-6 gap-3 mb-6">
-          {[
-            { label: "Temp (°C)", value: latest.temperature },
-            { label: "Vibration", value: latest.vibration },
-            { label: "RPM", value: latest.rpm },
-            { label: "Pressure", value: latest.pressure },
-            { label: "Power (kW)", value: latest.power_consumption },
-            { label: "Oil Level (%)", value: latest.oil_level },
-          ].map(({ label, value }) => (
-            <div key={label} className="bg-white rounded-xl shadow p-3 border border-gray-100 text-center">
-              <p className="text-xs text-gray-400">{label}</p>
-              <p className="text-xl font-bold text-gray-800 mt-1">
-                {value !== null && value !== undefined ? value.toFixed(1) : "—"}
-              </p>
-            </div>
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-6">
+        {[
+          { key: "temperature", label: "Temperature", unit: "°C" },
+          { key: "vibration", label: "Vibration", unit: "" },
+          { key: "rpm", label: "RPM", unit: "rpm" },
+          { key: "pressure", label: "Pressure", unit: "bar" },
+          { key: "power_consumption", label: "Power", unit: "kW" },
+          { key: "oil_level", label: "Oil Level", unit: "%" },
+        ].map(({ key, label, unit }) => {
+          const val = latest?.[key];
+          const threshold = getThresholdState(key, val);
+
+          return (
+            <MetricTile
+              key={key}
+              label={label}
+              value={val}
+              unit={unit}
+              warn={threshold.warn}
+              critical={threshold.critical}
+            />
+          );
+        })}
+      </div>
+
+      {/* Metric selector */}
+      <div className="flex flex-wrap gap-2 mb-4 items-center">
+        <span className="text-xs font-medium text-gray-500 mr-1">
+          Show metrics:
+        </span>
+        {ALL_METRICS.map((key) => {
+          const cfg = METRIC_CONFIG[key];
+          const active = selectedMetrics.includes(key);
+
+          return (
+            <button
+              key={key}
+              onClick={() => toggleMetric(key)}
+              className={`text-xs px-2.5 py-1 rounded-full border transition-all font-medium
+                ${
+                  active
+                    ? "text-white border-transparent"
+                    : "text-gray-500 border-gray-200 bg-white hover:border-gray-300"
+                }`}
+              style={
+                active
+                  ? { backgroundColor: cfg.color, borderColor: cfg.color }
+                  : {}
+              }
+            >
+              {cfg.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Charts grid */}
+      {telLoading && telemetry.length === 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
+          {[...Array(3)].map((_, i) => (
+            <SkeletonChart key={i} />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
+          {selectedMetrics.map((metric) => (
+            <TelemetryChart
+              key={metric}
+              data={telemetry}
+              metric={metric}
+              height={200}
+              showThresholds
+            />
           ))}
         </div>
       )}
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
-        {METRICS.map((m) => (
-          <TelemetryChart key={m} data={telemetry} metric={m} />
-        ))}
-      </div>
+      {/* Ditto Twin collapsible panel */}
+      <div className="rounded-xl border border-gray-200 overflow-hidden">
+        <button
+          onClick={() => setShowTwin((v) => !v)}
+          className="w-full flex items-center justify-between px-5 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-sm font-medium text-gray-600"
+        >
+          <div className="flex items-center gap-2">
+            <Terminal size={15} />
+            Eclipse Ditto — Live Twin State
+          </div>
+          <ChevronDown
+            size={16}
+            className={`transition-transform duration-200 ${
+              showTwin ? "rotate-180" : ""
+            }`}
+          />
+        </button>
 
-      {/* Ditto Twin JSON */}
-      {twin && (
-        <div className="bg-gray-900 text-green-400 rounded-xl p-4 text-xs font-mono overflow-auto max-h-72">
-          <p className="text-gray-400 mb-2 text-xs">Eclipse Ditto — Live Twin State</p>
-          <pre>{JSON.stringify(twin, null, 2)}</pre>
-        </div>
-      )}
+        {showTwin && (
+          <div className="bg-gray-900 text-green-400 p-4 font-mono text-xs overflow-auto max-h-72">
+            {twin ? (
+              <pre>{JSON.stringify(twin, null, 2)}</pre>
+            ) : (
+              <span className="text-gray-500">Loading twin state...</span>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

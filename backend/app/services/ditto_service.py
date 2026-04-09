@@ -13,6 +13,8 @@ class DittoService:
     def __init__(self) -> None:
         self.base_url = settings.ditto_base_url.rstrip("/")
         self.auth = (settings.ditto_username, settings.ditto_password)
+
+        # Default headers (safe for PUT/GET)
         self.headers = {
             "Content-Type": "application/json",
         }
@@ -72,7 +74,11 @@ class DittoService:
             return False
 
         try:
-            async with self._client() as client:
+            async with httpx.AsyncClient(
+                auth=self.auth,
+                headers={"Content-Type": "application/merge-patch+json"},
+                timeout=10.0,
+            ) as client:
                 resp = await client.patch(
                     f"{self.base_url}/api/2/things/{thing_id}/features/telemetry/properties",
                     json=props,
@@ -89,6 +95,7 @@ class DittoService:
                 resp.text,
             )
             return False
+
         except Exception as e:
             logger.warning("Ditto telemetry update exception for %s: %s", thing_id, e)
             return False
@@ -104,7 +111,11 @@ class DittoService:
     async def update_status(self, thing_id: str, operational: bool, last_seen: str) -> bool:
         """Update status feature of a digital twin."""
         try:
-            async with self._client() as client:
+            async with httpx.AsyncClient(
+                auth=self.auth,
+                headers={"Content-Type": "application/merge-patch+json"},
+                timeout=10.0,
+            ) as client:
                 resp = await client.patch(
                     f"{self.base_url}/api/2/things/{thing_id}/features/status/properties",
                     json={"operational": operational, "last_seen": last_seen},
@@ -121,6 +132,7 @@ class DittoService:
                 resp.text,
             )
             return False
+
         except Exception as e:
             logger.warning("Ditto status update exception for %s: %s", thing_id, e)
             return False
