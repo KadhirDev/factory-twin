@@ -4,7 +4,7 @@ import { usePolling } from "../hooks/usePolling";
 import AlertBadge from "../components/AlertBadge";
 import LiveBadge from "../components/LiveBadge";
 import { ErrorBanner } from "../components/ui/ErrorBanner";
-import { CheckCircle, AlertTriangle, Siren } from "lucide-react";
+import { CheckCircle, AlertTriangle, BellRing } from "lucide-react";
 import { formatDistanceToNow, parseISO } from "date-fns";
 
 const REFRESH_MS = 5000;
@@ -47,7 +47,6 @@ export default function Alerts() {
     }
   };
 
-  // Stats (computed from current list)
   const critCount = alerts.filter(
     (a) => a.severity === "critical" && !a.acknowledged
   ).length;
@@ -57,7 +56,6 @@ export default function Alerts() {
 
   return (
     <div className="p-6 max-w-screen-xl mx-auto">
-      {/* Header */}
       <div className="flex items-end justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Alerts</h1>
@@ -66,10 +64,9 @@ export default function Alerts() {
         <LiveBadge intervalSeconds={REFRESH_MS / 1000} />
       </div>
 
-      {/* Stats bar */}
       <div className="grid grid-cols-2 gap-4 mb-5">
         <div className="bg-red-50 border border-red-100 rounded-xl p-4 flex items-center gap-3">
-          <Siren size={22} className="text-red-500 shrink-0" />
+          <BellRing size={22} className="text-red-500 shrink-0" />
           <div>
             <p className="text-xs text-red-400 font-medium">Unread Critical</p>
             <p className="text-2xl font-bold text-red-600 tabular-nums">{critCount}</p>
@@ -84,7 +81,6 @@ export default function Alerts() {
         </div>
       </div>
 
-      {/* Filter tabs */}
       <div className="flex gap-2 mb-5 border-b border-gray-100 pb-3">
         {SEVERITY_FILTERS.map(({ key, label }) => (
           <button
@@ -102,14 +98,12 @@ export default function Alerts() {
         ))}
       </div>
 
-      {/* Error */}
       {error && (
         <div className="mb-4">
           <ErrorBanner message={error} onRetry={refresh} />
         </div>
       )}
 
-      {/* List */}
       {loading && alerts.length === 0 ? (
         <div className="space-y-3">
           {[...Array(4)].map((_, i) => (
@@ -147,7 +141,6 @@ function AlertRow({ alert, onAck }) {
             : "border-gray-200 shadow-sm"
         }`}
     >
-      {/* Severity indicator stripe */}
       <div
         className={`w-1 self-stretch rounded-full shrink-0
           ${
@@ -159,7 +152,6 @@ function AlertRow({ alert, onAck }) {
           }`}
       />
 
-      {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center gap-2 mb-1">
           <AlertBadge severity={alert.severity} />
@@ -187,7 +179,6 @@ function AlertRow({ alert, onAck }) {
         </div>
       </div>
 
-      {/* Ack button */}
       {!alert.acknowledged && (
         <button
           onClick={() => onAck(alert.id)}

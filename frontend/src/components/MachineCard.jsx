@@ -1,3 +1,4 @@
+import React from "react";
 import { Link } from "react-router-dom";
 import { Cpu, MapPin, Activity } from "lucide-react";
 import StatusDot from "./StatusDot";

@@ -1,7 +1,7 @@
 /**
  * Shows a countdown to next refresh and a "LIVE" indicator.
  */
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 
 export default function LiveBadge({ intervalSeconds = 5 }) {
   const [remaining, setRemaining] = useState(intervalSeconds);

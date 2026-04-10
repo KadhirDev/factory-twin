@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import React, { useCallback } from "react";
 import { getMachines } from "../api/client";
 import { usePolling } from "../hooks/usePolling";
 import MachineCard from "../components/MachineCard";
@@ -20,7 +20,7 @@ export default function Dashboard() {
     refresh,
   } = usePolling(fetchFn, REFRESH_MS);
 
-  const counts = machines.reduce(
+  const counts = (machines || []).reduce(
     (acc, m) => ({ ...acc, [m.status]: (acc[m.status] || 0) + 1 }),
     {}
   );

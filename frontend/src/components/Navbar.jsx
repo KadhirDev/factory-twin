@@ -1,3 +1,4 @@
+import React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Factory, LayoutDashboard, Bell } from "lucide-react";
 import { usePolling } from "../hooks/usePolling";

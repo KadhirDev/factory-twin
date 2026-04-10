@@ -1,3 +1,4 @@
+import React from "react";
 /**
  * Skeleton shimmer — used while data is loading.
  * className controls size/shape.

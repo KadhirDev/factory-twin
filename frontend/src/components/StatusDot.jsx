@@ -1,3 +1,4 @@
+import React from "react";
 /**
  * Animated status indicator dot.
  * Pulses when online to show live data, static when not.

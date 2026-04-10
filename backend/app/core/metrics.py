@@ -1,5 +1,5 @@
-from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_client import Counter, Gauge, Histogram, Info
+from prometheus_fastapi_instrumentator import Instrumentator
 
 # ── Business metrics ──────────────────────────────────────────────────────────
 
@@ -15,7 +15,21 @@ alerts_counter = Counter(
     ["machine_id", "severity"],
 )
 
-# ── Real-time sensor gauges (latest value per machine) ────────────────────────
+# ── AI anomaly metrics (Phase 3) ──────────────────────────────────────────────
+
+anomaly_detected_counter = Counter(
+    "factory_twin_anomalies_detected_total",
+    "Total anomalies detected by the AI scoring engine",
+    ["machine_id", "level"],   # level: warning | critical
+)
+
+anomaly_score_gauge = Gauge(
+    "factory_twin_anomaly_score",
+    "Latest composite anomaly z-score per machine",
+    ["machine_id"],
+)
+
+# ── Real-time sensor gauges (latest value per machine) ───────────────────────
 
 telemetry_temperature_gauge = Gauge(
     "factory_twin_sensor_temperature_celsius",
@@ -74,7 +88,13 @@ app_info = Info(
     "factory_twin_app",
     "Factory Twin application metadata",
 )
-app_info.info({"version": "1.0.0", "env": "production"})
+app_info.info(
+    {
+        "version": "1.1.0",
+        "env": "production",
+        "ai_layer": "anomaly_detection",
+    }
+)
 
 
 def setup_metrics(app) -> None:

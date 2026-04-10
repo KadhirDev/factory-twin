@@ -9,13 +9,13 @@ import { useState, useEffect, useCallback, useRef } from "react";
  * @param {Array}    deps      - re-subscribe when these change (like useEffect deps)
  */
 export function usePolling(fetchFn, interval = 5000, deps = []) {
-  const [data,    setData]    = useState(null);
+  const [data, setData] = useState(undefined);
   const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState(null);
-  const [lastAt,  setLastAt]  = useState(null);
+  const [error, setError] = useState(null);
+  const [lastAt, setLastAt] = useState(null);
 
-  const timerRef    = useRef(null);
-  const mountedRef  = useRef(true);
+  const timerRef = useRef(null);
+  const mountedRef = useRef(true);
 
   const execute = useCallback(async () => {
     try {
@@ -30,7 +30,7 @@ export function usePolling(fetchFn, interval = 5000, deps = []) {
     } finally {
       if (mountedRef.current) setLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
   useEffect(() => {

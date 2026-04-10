@@ -1,3 +1,4 @@
+import React from "react";
 /**
  * Single metric display tile — used in machine detail header.
  * Shows value, label, and optional threshold warning color.

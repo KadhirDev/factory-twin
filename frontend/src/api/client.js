@@ -32,6 +32,12 @@ export const getLatestTelemetry = (machineId) =>
 export const getTelemetryHistory = (machineId, limit = 60) =>
   client.get(`/telemetry/${machineId}?limit=${limit}`);
 
+// ── AI anomaly endpoints (NEW - safe addition) ────────────────────────────────
+export const getAnomalies = (machineId, limit = 30) =>
+  client.get(`/telemetry/${machineId}/anomalies?limit=${limit}`);
+export const getAnomalyStats = (machineId) =>
+  client.get(`/telemetry/${machineId}/anomaly-stats`);
+
 // ── Alerts ────────────────────────────────────────────────────────────────────
 export const getAlerts = (params = {}) => client.get("/alerts/", { params });
 export const acknowledgeAlert = (alertId) =>

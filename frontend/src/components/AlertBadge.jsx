@@ -1,3 +1,4 @@
+import React from "react";
 const COLORS = {
   critical: "bg-red-100 text-red-700 border-red-300",
   warning: "bg-yellow-100 text-yellow-700 border-yellow-300",
