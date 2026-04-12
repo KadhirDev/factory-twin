@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useMemo } from "react";
 import { getAlerts, acknowledgeAlert } from "../api/client";
 import { usePolling } from "../hooks/usePolling";
+import { useAuth } from "../context/AuthContext";
 import AlertBadge from "../components/AlertBadge";
 import LiveBadge from "../components/LiveBadge";
 import { ErrorBanner } from "../components/ui/ErrorBanner";
@@ -316,6 +317,7 @@ export default function Alerts() {
 }
 
 function AlertRow({ alert, onAck }) {
+  const { can } = useAuth();
   const timeAgo = formatDistanceToNow(parseISO(alert.created_at), { addSuffix: true });
 
   return (
@@ -346,11 +348,16 @@ function AlertRow({ alert, onAck }) {
         </div>
         <p className="text-sm text-gray-600 truncate">{alert.message}</p>
         <div className="flex items-center gap-4 mt-1.5 text-xs text-gray-400">
-          <span>Value: <strong className="text-gray-600">{alert.value?.toFixed(2)}</strong></span>
-          <span>Threshold: <strong className="text-gray-600">{alert.threshold?.toFixed(2)}</strong></span>
+          <span>
+            Value: <strong className="text-gray-600">{alert.value?.toFixed(2)}</strong>
+          </span>
+          <span>
+            Threshold:{" "}
+            <strong className="text-gray-600">{alert.threshold?.toFixed(2)}</strong>
+          </span>
         </div>
       </div>
-      {!alert.acknowledged && (
+      {!alert.acknowledged && can("alerts") && (
         <button
           onClick={() => onAck(alert.id)}
           className="flex items-center gap-1.5 text-xs text-green-600 border border-green-200 bg-green-50 hover:bg-green-100 px-3 py-1.5 rounded-lg transition shrink-0"

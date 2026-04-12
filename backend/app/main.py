@@ -1,7 +1,8 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -9,9 +10,12 @@ from fastapi.responses import JSONResponse
 from app.core.logging_config import setup_logging
 from app.core.middleware import RequestIDMiddleware, global_exception_handler
 from app.core.metrics import setup_metrics
+from app.core.dependencies import get_current_user
+from app.core.seed import seed_default_users
 from app.database import create_tables
 from app.routers import machines, telemetry, alerts
 from app.routers.health import router as health_router
+from app.routers.auth import router as auth_router
 from app.services.kafka_producer import start_producer, stop_producer
 from app.services.kafka_consumer import consume_telemetry
 from app.config import get_settings
@@ -30,36 +34,43 @@ async def lifespan(app: FastAPI):
     logger.info("Factory Twin backend starting", extra={"env": settings.app_env})
 
     await create_tables()
-    await start_producer()
+    await seed_default_users()  # idempotent, safe every boot
 
     global _consumer_task
-    _consumer_task = asyncio.create_task(
-        consume_telemetry(),
-        name="kafka-consumer"
-    )
+    if settings.kafka_enabled:
+        await start_producer()
+        _consumer_task = asyncio.create_task(
+            consume_telemetry(),
+            name="kafka-consumer",
+        )
+        logger.info("Kafka integration enabled")
+    else:
+        logger.warning("Kafka integration disabled for this environment")
 
     logger.info("All services initialized — ready to serve")
     yield
 
-    # ── Shutdown ──
+    # ── Shutdown ──────────────────────────────────────────────────────────────
     logger.info("Factory Twin backend shutting down")
 
-    if _consumer_task and not _consumer_task.done():
-        _consumer_task.cancel()
-        try:
-            await asyncio.wait_for(_consumer_task, timeout=5.0)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            pass
+    if settings.kafka_enabled:
+        if _consumer_task and not _consumer_task.done():
+            _consumer_task.cancel()
+            try:
+                await asyncio.wait_for(_consumer_task, timeout=5.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
 
-    await stop_producer()
+        await stop_producer()
+
     logger.info("Shutdown complete")
 
 
 # ── App Initialization ────────────────────────────────────────────────────────
 app = FastAPI(
     title="Factory Twin API",
-    description="Real-Time Industrial Digital Twin System",
-    version="1.0.0",
+    description="Real-Time AI Industrial Digital Twin System",
+    version="1.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -74,7 +85,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(RequestIDMiddleware)
-
 
 # ── Exception Handling ────────────────────────────────────────────────────────
 app.add_exception_handler(Exception, global_exception_handler)
@@ -96,9 +106,17 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # ── Metrics ───────────────────────────────────────────────────────────────────
 setup_metrics(app)
 
-
 # ── Routers ───────────────────────────────────────────────────────────────────
+
+# Public — no auth required
 app.include_router(health_router)  # /health, /health/deep
-app.include_router(machines.router,  prefix="/api/v1")
-app.include_router(telemetry.router, prefix="/api/v1")
-app.include_router(alerts.router,    prefix="/api/v1")
+app.include_router(auth_router)
+
+# Protected — every endpoint in these routers requires a valid JWT.
+# The dependencies parameter injects get_current_user on all routes in the router
+# without touching the individual router files.
+_auth_dep = [Depends(get_current_user)]
+
+app.include_router(machines.router, prefix="/api/v1", dependencies=_auth_dep)
+app.include_router(telemetry.router, prefix="/api/v1", dependencies=_auth_dep)
+app.include_router(alerts.router, prefix="/api/v1", dependencies=_auth_dep)

@@ -1,8 +1,6 @@
 # ⚠️ SAFE — only manages factory-twin project containers
 # Does NOT touch Ditto, Kafka, Zookeeper, or Minikube
 
-version: "3.9"
-
 networks:
   factory-net:
     name: factory-twin-network
@@ -38,6 +36,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: factory-backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     networks:
       - factory-net
     env_file:

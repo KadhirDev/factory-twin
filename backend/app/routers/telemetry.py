@@ -20,7 +20,7 @@ from app.models.machine import Machine, MachineStatus
 from app.models.telemetry import TelemetryLog
 from app.schemas.telemetry import TelemetryIngest, TelemetryResponse
 from app.services.alert_service import evaluate_and_store_alerts
-from app.services.anomaly_service import detector as anomaly_detector
+from app.services.ml_anomaly_service import ml_scorer
 from app.services.ditto_service import ditto_service
 from app.services.kafka_producer import publish_alert, publish_telemetry
 
@@ -28,31 +28,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/telemetry", tags=["Telemetry"])
 
 
-# ── Ingest ────────────────────────────────────────────────────────────────────
-
+# ─────────────────────────────────────────────────────────────
+# INGEST PIPELINE
+# ─────────────────────────────────────────────────────────────
 @router.post("/ingest")
 async def ingest_telemetry(
     payload: TelemetryIngest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Full ingestion pipeline (DB-first, non-blocking Ditto/Kafka):
-
-    Critical path (synchronous):
-      1. Validate machine
-      2. AI anomaly scoring
-      3. Persist telemetry + anomaly score
-      4. Update machine status
-      5. Threshold alert evaluation
-
-    Background (non-blocking):
-      6. Update Eclipse Ditto twin (includes anomaly flag)
-      7. Publish to Kafka
-    """
     t_start = time.perf_counter()
 
-    # ── 1. Validate machine ───────────────────────────────────────────────────
     result = await db.execute(
         select(Machine).where(Machine.machine_id == payload.machine_id)
     )
@@ -60,13 +46,9 @@ async def ingest_telemetry(
     if not machine:
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"Machine '{payload.machine_id}' not found. "
-                "Register it via POST /api/v1/machines/"
-            ),
+            detail=f"Machine '{payload.machine_id}' not found. Register via POST /api/v1/machines/",
         )
 
-    # ── 2. AI anomaly scoring ─────────────────────────────────────────────────
     telemetry_dict = {
         k: v
         for k, v in {
@@ -80,9 +62,8 @@ async def ingest_telemetry(
         if v is not None
     }
 
-    anomaly_result = anomaly_detector.score(payload.machine_id, telemetry_dict)
+    anomaly_result = ml_scorer.score(payload.machine_id, telemetry_dict)
 
-    # ── 3. Persist telemetry + anomaly score ──────────────────────────────────
     log = TelemetryLog(
         machine_id=machine.id,
         temperature=payload.temperature,
@@ -102,18 +83,15 @@ async def ingest_telemetry(
     )
     db.add(log)
 
-    # ── 4. Update machine status ──────────────────────────────────────────────
     machine.status = MachineStatus.ONLINE
     await db.flush()
 
-    # ── 5. Threshold alert evaluation ────────────────────────────────────────
     try:
         new_alerts = await evaluate_and_store_alerts(db, machine, payload)
     except Exception as e:
         logger.error("Alert evaluation failed for %s: %s", payload.machine_id, e)
         new_alerts = []
 
-    # ── Prometheus metrics ────────────────────────────────────────────────────
     telemetry_ingest_counter.labels(machine_id=payload.machine_id).inc()
     anomaly_score_gauge.labels(machine_id=payload.machine_id).set(
         anomaly_result.composite_score
@@ -137,7 +115,6 @@ async def ingest_telemetry(
             level=level,
         ).inc()
 
-    # ── 6 & 7. Background: Ditto + Kafka ─────────────────────────────────────
     background_tasks.add_task(
         _background_sync,
         thing_id=machine.ditto_thing_id,
@@ -156,7 +133,6 @@ async def ingest_telemetry(
         ],
     )
 
-    # ── Latency histogram ─────────────────────────────────────────────────────
     ingest_duration_histogram.observe(time.perf_counter() - t_start)
 
     return {
@@ -168,11 +144,17 @@ async def ingest_telemetry(
             "is_anomaly": anomaly_result.is_anomaly,
             "is_critical": anomaly_result.is_critical,
             "sample_count": anomaly_result.sample_count,
+            "detector": "isolation_forest"
+            if anomaly_result.sample_count >= 50
+            else "z_score",
         },
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
+# ─────────────────────────────────────────────────────────────
+# BACKGROUND SYNC
+# ─────────────────────────────────────────────────────────────
 async def _background_sync(
     thing_id: str,
     telemetry_dict: dict,
@@ -181,9 +163,6 @@ async def _background_sync(
     is_anomaly: bool,
     alert_payloads: list,
 ):
-    """Non-blocking sync to Ditto and Kafka after HTTP response is sent."""
-
-    # Ditto: include anomaly state in twin
     if thing_id:
         try:
             await ditto_service.update_telemetry(thing_id, telemetry_dict)
@@ -195,13 +174,7 @@ async def _background_sync(
             await _update_ditto_anomaly(thing_id, anomaly_score, is_anomaly)
         except Exception as e:
             logger.warning("Ditto sync failed for %s: %s", thing_id, e)
-    else:
-        logger.warning(
-            "No Ditto thing_id for machine %s, skipping twin update",
-            machine_id,
-        )
 
-    # Kafka telemetry publish
     try:
         await publish_telemetry(
             machine_id,
@@ -210,7 +183,6 @@ async def _background_sync(
     except Exception as e:
         logger.warning("Kafka telemetry publish failed for %s: %s", machine_id, e)
 
-    # Kafka alert publish
     for alert in alert_payloads:
         try:
             await publish_alert(machine_id, alert)
@@ -218,18 +190,11 @@ async def _background_sync(
             logger.warning("Kafka alert publish failed for %s: %s", machine_id, e)
 
 
-async def _update_ditto_anomaly(
-    thing_id: str,
-    score: float,
-    is_anomaly: bool,
-) -> None:
-    """Update the anomaly feature in the Ditto digital twin."""
+async def _update_ditto_anomaly(thing_id: str, score: float, is_anomaly: bool):
     try:
-        from app.services.ditto_service import ditto_service as ds
-
-        async with ds._client() as client:
+        async with ditto_service._client() as client:
             await client.patch(
-                f"{ds.base_url}/api/2/things/{thing_id}/features/anomaly/properties",
+                f"{ditto_service.base_url}/api/2/things/{thing_id}/features/anomaly/properties",
                 json={
                     "score": round(score, 4),
                     "is_anomaly": is_anomaly,
@@ -238,21 +203,19 @@ async def _update_ditto_anomaly(
                 headers={"Content-Type": "application/merge-patch+json"},
             )
     except Exception as e:
-        logger.debug("Ditto anomaly feature update failed (non-critical): %s", e)
+        logger.debug("Ditto anomaly update failed: %s", e)
 
 
-# ── Read endpoints ────────────────────────────────────────────────────────────
-
+# ─────────────────────────────────────────────────────────────
+# READ APIs
+# ─────────────────────────────────────────────────────────────
 @router.get("/{machine_id}", response_model=List[TelemetryResponse])
 async def get_telemetry(
     machine_id: str,
     limit: int = Query(default=100, le=1000),
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
-    anomalies_only: bool = Query(
-        default=False,
-        description="Return only anomalous readings",
-    ),
+    anomalies_only: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(Machine).where(Machine.machine_id == machine_id))
@@ -274,10 +237,7 @@ async def get_telemetry(
 
 
 @router.get("/{machine_id}/latest", response_model=TelemetryResponse)
-async def get_latest_telemetry(
-    machine_id: str,
-    db: AsyncSession = Depends(get_db),
-):
+async def get_latest_telemetry(machine_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Machine).where(Machine.machine_id == machine_id))
     machine = result.scalar_one_or_none()
     if not machine:
@@ -291,10 +251,7 @@ async def get_latest_telemetry(
     )
     log = result.scalar_one_or_none()
     if not log:
-        raise HTTPException(
-            status_code=404,
-            detail="No telemetry data found for this machine",
-        )
+        raise HTTPException(status_code=404, detail="No telemetry data found")
     return log
 
 
@@ -304,10 +261,6 @@ async def get_anomalies(
     limit: int = Query(default=50, le=500),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Return the most recent anomalous telemetry readings for a machine.
-    Each record includes anomaly_score and anomaly_details.
-    """
     result = await db.execute(select(Machine).where(Machine.machine_id == machine_id))
     machine = result.scalar_one_or_none()
     if not machine:
@@ -324,15 +277,7 @@ async def get_anomalies(
 
 
 @router.get("/{machine_id}/anomaly-stats")
-async def get_anomaly_stats(
-    machine_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Return anomaly statistics for a machine:
-    - Current detector window stats (mean/std per metric)
-    - Count of recent anomalies
-    """
+async def get_anomaly_stats(machine_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Machine).where(Machine.machine_id == machine_id))
     machine = result.scalar_one_or_none()
     if not machine:
@@ -340,20 +285,31 @@ async def get_anomaly_stats(
 
     from sqlalchemy import func as sqlfunc
 
-    anomaly_count = await db.execute(
+    anomaly_count_result = await db.execute(
         select(sqlfunc.count(TelemetryLog.id))
         .where(TelemetryLog.machine_id == machine.id)
         .where(TelemetryLog.is_anomaly == True)  # noqa: E712
     )
 
+    state = ml_scorer._get_state(machine_id)
+    score_trend = ml_scorer.get_score_trend(machine_id)
+    detector_windows = ml_scorer.get_window_stats(machine_id)
+
     return {
         "machine_id": machine_id,
-        "anomaly_count": anomaly_count.scalar_one(),
-        "detector_windows": anomaly_detector.get_window_stats(machine_id),
+        "anomaly_count": anomaly_count_result.scalar_one(),
+        "detector_windows": detector_windows,
+        "score_trend": score_trend,
         "config": {
-            "window_size": 60,
-            "min_samples": 15,
+            "window_size": 50,
+            "min_samples": 50,
             "anomaly_threshold": 2.8,
             "critical_threshold": 4.0,
+            "detector_type": "isolation_forest"
+            if state.model is not None
+            else "z_score",
+            "ml_buffer_size": len(state.buffer),
+            "ml_model_ready": state.model is not None,
+            "ml_trained_on": state.total_trained_on,
         },
     }

@@ -1,6 +1,7 @@
 import React, { useCallback } from "react";
-import { getMachines, getTelemetryHistory } from "../api/client";
+import { getMachines } from "../api/client";
 import { usePolling } from "../hooks/usePolling";
+import { useTelemetryCache } from "../context/TelemetryContext";
 import MachineCard from "../components/MachineCard";
 import LiveBadge from "../components/LiveBadge";
 import TelemetrySparkline from "../components/charts/TelemetrySparkline";
@@ -10,14 +11,16 @@ import { PlusCircle, Activity, Cpu, AlertTriangle, WifiOff } from "lucide-react"
 
 const REFRESH_MS = 5000;
 
-// ── Fleet health segmented bar ────────────────────────────────────────────────
+// ── Fleet health segmented bar ─────────────────────────────────────────────────
 function FleetHealthBar({ machines }) {
   const total = machines?.length || 0;
   if (total === 0) return null;
 
   const online = machines.filter((m) => m.status === "online").length;
   const warning = machines.filter((m) => m.status === "warning").length;
-  const offline = machines.filter((m) => m.status === "offline" || m.status === "error").length;
+  const offline = machines.filter(
+    (m) => m.status === "offline" || m.status === "error"
+  ).length;
   const pct = (n) => ((n / total) * 100).toFixed(1);
 
   return (
@@ -26,28 +29,27 @@ function FleetHealthBar({ machines }) {
         <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
           Fleet Health
         </span>
-        <span className="text-xs text-gray-400">{total} machine{total !== 1 ? "s" : ""}</span>
+        <span className="text-xs text-gray-400">
+          {total} machine{total !== 1 ? "s" : ""}
+        </span>
       </div>
       <div className="flex rounded-full overflow-hidden h-3 bg-gray-100 mb-2">
         {online > 0 && (
           <div
             className="bg-green-500 transition-all duration-500"
             style={{ width: `${pct(online)}%` }}
-            title={`Online: ${online}`}
           />
         )}
         {warning > 0 && (
           <div
             className="bg-yellow-400 transition-all duration-500"
             style={{ width: `${pct(warning)}%` }}
-            title={`Warning: ${warning}`}
           />
         )}
         {offline > 0 && (
           <div
             className="bg-red-400 transition-all duration-500"
             style={{ width: `${pct(offline)}%` }}
-            title={`Offline: ${offline}`}
           />
         )}
       </div>
@@ -67,12 +69,14 @@ function FleetHealthBar({ machines }) {
   );
 }
 
-// ── Machine state activity summary ────────────────────────────────────────────
+// ── Activity summary ───────────────────────────────────────────────────────────
 function ActivitySummary({ machines }) {
   const safe = machines || [];
   const online = safe.filter((m) => m.status === "online").length;
   const warning = safe.filter((m) => m.status === "warning").length;
-  const offline = safe.filter((m) => m.status === "offline" || m.status === "error").length;
+  const offline = safe.filter(
+    (m) => m.status === "offline" || m.status === "error"
+  ).length;
   const total = safe.length;
 
   const items = [
@@ -109,29 +113,29 @@ function ActivitySummary({ machines }) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
       {items.map(({ icon: Icon, label, value, color, bg }) => (
-        <div key={label} className={`rounded-xl border p-4 shadow-sm ${bg} border-transparent`}>
+        <div key={label} className={`rounded-xl border-0 p-4 shadow-sm ${bg}`}>
           <div className="flex items-center gap-2 mb-1">
             <Icon size={15} className={color} />
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide truncate">
               {label}
             </p>
           </div>
-          <p className={`text-3xl font-bold tabular-nums mt-1 ${color}`}>{value}</p>
+          <p className={`text-3xl font-bold tabular-nums mt-1 ${color}`}>
+            {value}
+          </p>
         </div>
       ))}
     </div>
   );
 }
 
-// ── Machine card with inline sparkline ────────────────────────────────────────
+// ── Machine card + sparkline ───────────────────────────────────────────────────
+// Now reads from shared TelemetryContext — no individual polling call.
 function MachineCardWithSparkline({ machine }) {
-  const fetchTelemetry = useCallback(
-    () => getTelemetryHistory(machine.machine_id, 20).then((r) => r.data),
-    [machine.machine_id]
-  );
-  const { data: telemetry = [] } = usePolling(fetchTelemetry, 6000);
+  const { getTelemetry } = useTelemetryCache();
+  const telemetry = getTelemetry(machine.machine_id);
 
-  const latest = (telemetry || [])[0];
+  const latest = telemetry?.[0];
   const temp = latest?.temperature;
   const isAnomaly = latest?.is_anomaly;
 
@@ -150,7 +154,13 @@ function MachineCardWithSparkline({ machine }) {
           {temp != null && (
             <span
               className={`text-xs font-mono font-semibold tabular-nums
-                ${temp >= 95 ? "text-red-600" : temp >= 80 ? "text-yellow-500" : "text-gray-600"}`}
+                ${
+                  temp >= 95
+                    ? "text-red-600"
+                    : temp >= 80
+                    ? "text-yellow-500"
+                    : "text-gray-600"
+                }`}
             >
               {temp.toFixed(1)}°C
             </span>
@@ -196,10 +206,10 @@ export default function Dashboard() {
         <LiveBadge intervalSeconds={REFRESH_MS / 1000} />
       </div>
 
-      {/* Activity summary — 4 stat tiles */}
+      {/* Activity summary */}
       <ActivitySummary machines={safeMachines} />
 
-      {/* Fleet health segmented bar */}
+      {/* Fleet health bar */}
       {safeMachines.length > 0 && <FleetHealthBar machines={safeMachines} />}
 
       {/* Error */}

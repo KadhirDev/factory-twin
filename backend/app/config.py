@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
+
 class Settings(BaseSettings):
     # PostgreSQL
     postgres_host: str = "localhost"
@@ -15,6 +16,7 @@ class Settings(BaseSettings):
     ditto_password: str = "ditto"
 
     # Kafka
+    kafka_enabled: bool = False
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_telemetry_topic: str = "factory.telemetry"
     kafka_alerts_topic: str = "factory.alerts"
@@ -23,7 +25,13 @@ class Settings(BaseSettings):
     mqtt_broker_host: str = "localhost"
     mqtt_broker_port: int = 1883
 
+    # App
     app_env: str = "development"
+
+    # Auth
+    jwt_secret: str = "factory-twin-dev-secret-change-in-production-min-32-chars"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_hours: int = 8
 
     class Config:
         env_file = ".env"
@@ -34,6 +42,7 @@ class Settings(BaseSettings):
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+
 
 @lru_cache()
 def get_settings() -> Settings:
