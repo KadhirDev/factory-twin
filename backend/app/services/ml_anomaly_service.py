@@ -2,26 +2,36 @@
 Factory Twin — ML Anomaly Detection Service
 ============================================
 
-Algorithm: Isolation Forest (sklearn)
-Fallback:  Existing z-score detector (anomaly_service.AnomalyDetector)
+Algorithm : Isolation Forest (sklearn) + StandardScaler per machine
+Fallback   : Existing z-score detector (cold-start / error recovery)
+Persistence: Models saved to MODEL_DIR after every training run;
+             loaded automatically at startup.
 
-Design:
-  - Per-machine IsolationForest, trained once MIN_TRAIN_SAMPLES collected
-  - Automatic retraining every RETRAIN_EVERY new samples
-  - z-score fallback during cold-start (sample_count < MIN_TRAIN_SAMPLES)
-  - Score mapping: raw IsolationForest score_samples() → positive anomaly magnitude
-  - Feature contribution ranking: top deviant metrics added to anomaly_details
-  - Score trend: rolling window of recent scores → rising / falling / stable
-  - Graceful degradation: any sklearn failure falls back to z-score silently
+Scoring pipeline per sample:
+  1. Feed z-score fallback (always — keeps baseline warm)
+  2. Extract feature vector (CORE_METRICS)
+  3. Push to per-machine training buffer
+  4. Trigger retraining if due
+  5. Cold-start (< MIN_TRAIN_SAMPLES) → return z-score result
+  6. Scale features with per-machine StandardScaler
+  7. Score with IsolationForest.score_samples()
+  8. Map raw score → positive anomaly score
+  9. Enrich anomaly_details with top_contributors
+ 10. Push to score_history for trend tracking
+ 11. Return AnomalyResult (identical external shape)
 """
 
 import logging
+import os
+import pickle
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
 from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import StandardScaler
 
 from app.services.anomaly_service import (
     ANOMALY_THRESHOLD,
@@ -32,7 +42,11 @@ from app.services.anomaly_service import (
 
 logger = logging.getLogger(__name__)
 
-# ── Configuration ─────────────────────────────────────────────────────────────
+# ── Configuration ──────────────────────────────────────────────────────────────
+
+# Only metrics that are reliably present in every telemetry sample.
+# Keeping the list short reduces noise and feature-extraction failures.
+CORE_METRICS = ["temperature", "vibration", "rpm"]
 
 MIN_TRAIN_SAMPLES = 50
 RETRAIN_EVERY = 30
@@ -42,18 +56,56 @@ IF_N_ESTIMATORS = 64
 IF_RANDOM_STATE = 42
 SCORE_HISTORY_SIZE = 20
 TREND_SLOPE_THRESHOLD = 0.05
-RAW_SCORE_SCALE = 10.0
+
+# Disk persistence — writable inside the container
+MODEL_DIR = Path(os.environ.get("ML_MODEL_DIR", "/app/ml_models"))
 
 
-# ── Per-machine state ─────────────────────────────────────────────────────────
+# ── Persistence helpers ────────────────────────────────────────────────────────
+
+def _model_path(machine_id: str) -> Path:
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    safe_id = machine_id.replace(":", "_").replace("/", "_")
+    return MODEL_DIR / f"{safe_id}.pkl"
+
+
+def _save_model(machine_id: str, model: IsolationForest, scaler: StandardScaler) -> None:
+    try:
+        path = _model_path(machine_id)
+        with open(path, "wb") as fh:
+            pickle.dump({"model": model, "scaler": scaler}, fh)
+        logger.info(f"Model saved: {path}")
+    except Exception as e:
+        logger.warning(f"Model save failed for {machine_id}: {e}")
+
+
+def _load_model(machine_id: str):
+    """Returns (model, scaler) tuple or (None, None) if no persisted model."""
+    try:
+        path = _model_path(machine_id)
+        if not path.exists():
+            return None, None
+        with open(path, "rb") as fh:
+            data = pickle.load(fh)
+        model = data.get("model")
+        scaler = data.get("scaler")
+        if model is None or scaler is None:
+            return None, None
+        logger.info(f"Model loaded from disk: {path}")
+        return model, scaler
+    except Exception as e:
+        logger.warning(f"Model load failed for {machine_id}: {e}")
+        return None, None
+
+
+# ── Per-machine state ──────────────────────────────────────────────────────────
 
 @dataclass
 class MachineMLState:
     buffer: deque = field(default_factory=lambda: deque(maxlen=BUFFER_SIZE))
-    score_history: deque = field(
-        default_factory=lambda: deque(maxlen=SCORE_HISTORY_SIZE)
-    )
+    score_history: deque = field(default_factory=lambda: deque(maxlen=SCORE_HISTORY_SIZE))
     model: Optional[IsolationForest] = None
+    scaler: Optional[StandardScaler] = None
     samples_since_retrain: int = 0
     total_trained_on: int = 0
 
@@ -61,30 +113,45 @@ class MachineMLState:
     def ready(self) -> bool:
         return len(self.buffer) >= MIN_TRAIN_SAMPLES
 
+    @property
+    def model_available(self) -> bool:
+        return self.model is not None and self.scaler is not None
+
+
+# ── Feature helpers ────────────────────────────────────────────────────────────
 
 def _extract_features(telemetry: dict) -> Optional[List[float]]:
-    """
-    Extract feature vector using available core metrics.
-    Avoid failing if some optional metrics are missing.
-    """
-    CORE_METRICS = ["temperature", "vibration", "rpm"]
-
+    """Extract CORE_METRICS as feature vector. Returns None if any metric missing."""
     row = []
     for metric in CORE_METRICS:
         val = telemetry.get(metric)
         if val is None:
             return None
         row.append(float(val))
-
     return row
 
 
-def _train(state: MachineMLState) -> Optional[IsolationForest]:
-    """Train a fresh IsolationForest on the current buffer."""
+def _normalize_machine_id(machine_id: str) -> str:
+    """Normalise machine_id so 'factory:machine1' and 'machine1' map to the same key."""
+    if ":" in machine_id:
+        return machine_id.split(":")[-1]
+    return machine_id
+
+
+# ── Training ───────────────────────────────────────────────────────────────────
+
+def _train(state: MachineMLState):
+    """
+    Fit a StandardScaler then an IsolationForest on the current buffer.
+    Returns (model, scaler) or (None, None) on failure.
+    """
     try:
         X = np.array(list(state.buffer), dtype=float)
         if X.shape[0] < MIN_TRAIN_SAMPLES:
-            return None
+            return None, None
+
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
 
         model = IsolationForest(
             n_estimators=IF_N_ESTIMATORS,
@@ -92,12 +159,32 @@ def _train(state: MachineMLState) -> Optional[IsolationForest]:
             random_state=IF_RANDOM_STATE,
             n_jobs=1,
         )
-        model.fit(X)
-        return model
-    except Exception as e:
-        logger.warning(f"IsolationForest training failed: {e}")
-        return None
+        model.fit(X_scaled)
+        return model, scaler
 
+    except Exception as e:
+        logger.warning(f"Training failed: {e}")
+        return None, None
+
+
+# ── Score mapping ──────────────────────────────────────────────────────────────
+
+def _map_raw_score_to_anomaly(raw_score: float, model: IsolationForest) -> float:
+    """
+    IsolationForest.score_samples() returns lower values for outliers.
+    We map to a positive anomaly score calibrated against the model's offset.
+
+    Mapping strategy:
+      - normal range centre ≈ model.offset_
+      - anomaly score = max(0, offset_ - raw_score) * SCALE
+    """
+    offset = getattr(model, "offset_", -0.1)
+    diff = offset - raw_score
+    scale = ANOMALY_THRESHOLD / 0.35
+    return max(0.0, diff * scale)
+
+
+# ── Explainability ─────────────────────────────────────────────────────────────
 
 def _rank_feature_contributions(
     metric_scores: Dict[str, float],
@@ -105,35 +192,29 @@ def _rank_feature_contributions(
     top_n: int = 3,
 ) -> List[dict]:
     """
-    Rank metrics by absolute z-score magnitude.
-    Returns the top_n contributing metrics with readable descriptions.
+    Rank CORE_METRICS by absolute z-score (from fallback).
+    Returns top_n contributor dicts for anomaly_details.
     """
     if not metric_scores:
         return []
 
     ranked = sorted(
-        metric_scores.items(),
+        [(m, z) for m, z in metric_scores.items() if m in CORE_METRICS],
         key=lambda kv: abs(kv[1]),
         reverse=True,
     )[:top_n]
 
-    contributions = []
+    result = []
     for metric, z in ranked:
         stats = metric_stats.get(metric, {})
         val = stats.get("value")
         mean = stats.get("mean")
-
         direction = "above" if z > 0 else "below"
         label = metric.replace("_", " ").title()
-
         desc = f"{label} is {abs(z):.2f}σ {direction} baseline"
         if val is not None and mean is not None:
-            try:
-                desc += f" (value={float(val):.2f}, mean={float(mean):.2f})"
-            except (TypeError, ValueError):
-                pass
-
-        contributions.append(
+            desc += f" (value={val:.2f}, mean={mean:.2f})"
+        result.append(
             {
                 "metric": metric,
                 "z_score": round(z, 3),
@@ -142,18 +223,14 @@ def _rank_feature_contributions(
                 "description": desc,
             }
         )
+    return result
 
-    return contributions
 
+# ── Trend ─────────────────────────────────────────────────────────────────────
 
 def _compute_trend(scores: deque) -> str:
-    """
-    Compute slope of recent anomaly scores.
-    Returns 'rising' | 'falling' | 'stable'.
-    """
     if len(scores) < 5:
         return "stable"
-
     arr = list(scores)
     n = len(arr)
     xs = list(range(n))
@@ -162,7 +239,6 @@ def _compute_trend(scores: deque) -> str:
     num = sum((x - xm) * (y - ym) for x, y in zip(xs, arr))
     den = sum((x - xm) ** 2 for x in xs)
     slope = num / den if den != 0 else 0.0
-
     if slope > TREND_SLOPE_THRESHOLD:
         return "rising"
     if slope < -TREND_SLOPE_THRESHOLD:
@@ -170,28 +246,48 @@ def _compute_trend(scores: deque) -> str:
     return "stable"
 
 
-# ── Main service ──────────────────────────────────────────────────────────────
+# ── Main service ───────────────────────────────────────────────────────────────
 
 class MLAnomalyService:
     """
     Drop-in replacement for AnomalyDetector.
-    Identical external interface: .score(machine_id, telemetry_dict) → AnomalyResult
+    External interface: .score(machine_id, telemetry_dict) → AnomalyResult
     """
 
     def __init__(self):
         self._states: Dict[str, MachineMLState] = {}
         self._fallback = AnomalyDetector()
+        self._load_persisted_models()
         logger.info(
             f"MLAnomalyService initialized "
-            f"(min_train={MIN_TRAIN_SAMPLES}, retrain_every={RETRAIN_EVERY}, "
-            f"contamination={IF_CONTAMINATION}, raw_score_scale={RAW_SCORE_SCALE})"
+            f"(core_metrics={CORE_METRICS}, min_train={MIN_TRAIN_SAMPLES}, "
+            f"retrain_every={RETRAIN_EVERY}, model_dir={MODEL_DIR})"
         )
 
-    def _normalize_machine_id(self, machine_id: str) -> str:
-        return str(machine_id).strip().lower()
+    def _load_persisted_models(self) -> None:
+        """
+        Scan MODEL_DIR for persisted model files and pre-populate state.
+        Called once at startup — silently skips if directory empty or missing.
+        """
+        try:
+            MODEL_DIR.mkdir(parents=True, exist_ok=True)
+            files = list(MODEL_DIR.glob("*.pkl"))
+            if not files:
+                return
+            for pkl_path in files:
+                machine_id = pkl_path.stem.replace("_", ":", 1)
+                model, scaler = _load_model(machine_id)
+                if model and scaler:
+                    state = self._get_state(machine_id)
+                    state.model = model
+                    state.scaler = scaler
+                    state.total_trained_on = MIN_TRAIN_SAMPLES
+                    logger.info(f"Restored model for machine: {machine_id}")
+        except Exception as e:
+            logger.warning(f"Startup model load error (non-fatal): {e}")
 
     def _get_state(self, machine_id: str) -> MachineMLState:
-        key = self._normalize_machine_id(machine_id)
+        key = _normalize_machine_id(machine_id)
         if key not in self._states:
             self._states[key] = MachineMLState()
         return self._states[key]
@@ -201,19 +297,8 @@ class MLAnomalyService:
         machine_id: str,
         telemetry: Dict[str, Optional[float]],
     ) -> AnomalyResult:
-        """
-        Score a telemetry sample.
+        """Score a telemetry sample. Always returns AnomalyResult."""
 
-        Steps:
-          1. Feed z-score fallback (always — keeps it warm)
-          2. Extract feature vector
-          3. Push to ML buffer; trigger retraining if due
-          4. Cold start → return z-score result
-          5. ML ready → score with IsolationForest
-          6. Build top_contributors for explainability
-          7. Push score to history for trend tracking
-          8. Return AnomalyResult (identical shape, enriched anomaly_details)
-        """
         z_result = self._fallback.score(machine_id, telemetry)
 
         features = _extract_features(telemetry)
@@ -221,38 +306,35 @@ class MLAnomalyService:
             return z_result
 
         state = self._get_state(machine_id)
-
         state.buffer.append(features)
         state.samples_since_retrain += 1
 
         should_train = (
             (state.samples_since_retrain >= RETRAIN_EVERY and state.ready)
-            or (state.model is None and state.ready)
+            or (not state.model_available and state.ready)
         )
-
         if should_train:
-            new_model = _train(state)
+            new_model, new_scaler = _train(state)
             if new_model is not None:
                 state.model = new_model
+                state.scaler = new_scaler
                 state.samples_since_retrain = 0
                 state.total_trained_on = len(state.buffer)
+                _save_model(machine_id, new_model, new_scaler)
                 logger.info(
                     f"IF model retrained for machine={machine_id} "
                     f"on {state.total_trained_on} samples"
                 )
 
-        if state.model is None:
+        if not state.model_available:
             state.score_history.append(z_result.composite_score)
             return z_result
 
         try:
-            X = np.array([features], dtype=float)
-
-            # Use raw IsolationForest sample score instead of centered decision function.
-            # Lower raw_score => more anomalous, so invert and scale to get a positive
-            # anomaly magnitude compatible with existing thresholds.
-            raw_score = float(state.model.score_samples(X)[0])
-            ml_score = max(0.0, -raw_score * RAW_SCORE_SCALE)
+            X_raw = np.array([features], dtype=float)
+            X_scaled = state.scaler.transform(X_raw)
+            raw = float(state.model.score_samples(X_scaled)[0])
+            ml_score = _map_raw_score_to_anomaly(raw, state.model)
 
             is_anomaly = ml_score >= ANOMALY_THRESHOLD
             is_critical = ml_score >= CRITICAL_THRESHOLD
@@ -267,7 +349,7 @@ class MLAnomalyService:
                 "composite_score": round(ml_score, 4),
                 "threshold": ANOMALY_THRESHOLD,
                 "detector": "isolation_forest",
-                "if_raw_score": round(raw_score, 5),
+                "raw_if_score": round(raw, 5),
                 "top_contributors": top_contributors,
                 "metrics": {
                     m: {
@@ -298,34 +380,22 @@ class MLAnomalyService:
                 triggers = [c["description"] for c in top_contributors[:2]]
                 logger.warning(
                     f"ML Anomaly [{level}] machine={machine_id} "
-                    f"score={ml_score:.3f} raw={raw_score:.5f} contributors={triggers}"
+                    f"score={ml_score:.3f} raw={raw:.4f} triggers={triggers}"
                 )
 
             return result
 
         except Exception as e:
-            logger.warning(
-                f"ML scoring failed for {machine_id}, using z-score fallback: {e}"
-            )
+            logger.warning(f"ML scoring failed for {machine_id}, using z-score: {e}")
             state.score_history.append(z_result.composite_score)
             return z_result
 
     def get_score_trend(self, machine_id: str) -> dict:
-        """
-        Return recent score trend for a machine.
-        Used by the /anomaly-stats endpoint.
-        """
         state = self._get_state(machine_id)
         history = list(state.score_history)
         trend = _compute_trend(state.score_history)
-
-        recent_avg = (
-            round(sum(history[-5:]) / len(history[-5:]), 4)
-            if len(history) >= 5
-            else None
-        )
+        recent_avg = round(sum(history[-5:]) / len(history[-5:]), 4) if len(history) >= 5 else None
         peak = round(max(history), 4) if history else None
-
         return {
             "trend": trend,
             "recent_avg": recent_avg,
@@ -335,33 +405,29 @@ class MLAnomalyService:
         }
 
     def get_window_stats(self, machine_id: str) -> dict:
-        """
-        Returns detector window stats augmented with ML status.
-        Compatible with existing /anomaly-stats API shape.
-        """
         base_stats = self._fallback.get_window_stats(machine_id)
         state = self._get_state(machine_id)
-
         for metric_data in base_stats.values():
             metric_data["ml_buffer_size"] = len(state.buffer)
-            metric_data["ml_model_ready"] = state.model is not None
+            metric_data["ml_model_ready"] = state.model_available
             metric_data["ml_trained_on"] = state.total_trained_on
-
         return base_stats
 
     def reset_machine(self, machine_id: str) -> None:
-        key = self._normalize_machine_id(machine_id)
+        key = _normalize_machine_id(machine_id)
         if key in self._states:
             del self._states[key]
+        try:
+            path = _model_path(machine_id)
+            if path.exists():
+                path.unlink()
+                logger.info(f"Persisted model deleted for {machine_id}")
+        except Exception as e:
+            logger.warning(f"Model deletion failed for {machine_id}: {e}")
         self._fallback.reset_machine(machine_id)
         logger.info(f"ML + z-score windows reset for machine={machine_id}")
 
 
-# ── Singleton ─────────────────────────────────────────────────────────────────
-ml_scorer = MLAnomalyService()
-
-
-# ── Patch AnomalyResult.to_details_dict to support override ───────────────────
 _original_to_details = AnomalyResult.to_details_dict
 
 
@@ -373,3 +439,6 @@ def _patched_to_details(self) -> dict:
 
 
 AnomalyResult.to_details_dict = _patched_to_details
+
+
+ml_scorer = MLAnomalyService()

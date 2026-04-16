@@ -9,6 +9,8 @@ networks:
 volumes:
   factory-postgres-data:
     name: factory-postgres-data
+  factory-ml-models:
+    name: factory-ml-models
 
 services:
 
@@ -43,6 +45,8 @@ services:
       - ./backend/.env
     environment:
       POSTGRES_HOST: factory-postgres
+    volumes:
+      - factory-ml-models:/app/ml_models
     ports:
       - "8000:8000"
     depends_on:
