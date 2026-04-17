@@ -62,7 +62,7 @@ async def ingest_telemetry(
         if v is not None
     }
 
-    anomaly_result = ml_scorer.score(payload.machine_id, telemetry_dict)
+    anomaly_result = await ml_scorer.score(payload.machine_id, telemetry_dict)
 
     log = TelemetryLog(
         machine_id=machine.id,

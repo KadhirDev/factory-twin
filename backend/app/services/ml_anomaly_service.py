@@ -6,6 +6,7 @@ Algorithm : Isolation Forest (sklearn) + StandardScaler per machine
 Fallback   : Existing z-score detector (cold-start / error recovery)
 Persistence: Models saved to MODEL_DIR after every training run;
              loaded automatically at startup.
+Concurrency: Per-machine asyncio.Lock prevents race on model update.
 
 Scoring pipeline per sample:
   1. Feed z-score fallback (always — keeps baseline warm)
@@ -21,6 +22,7 @@ Scoring pipeline per sample:
  11. Return AnomalyResult (identical external shape)
 """
 
+import asyncio
 import logging
 import os
 import pickle
@@ -250,12 +252,13 @@ def _compute_trend(scores: deque) -> str:
 
 class MLAnomalyService:
     """
-    Drop-in replacement for AnomalyDetector.
-    External interface: .score(machine_id, telemetry_dict) → AnomalyResult
+    Async-safe drop-in replacement for AnomalyDetector.
+    External interface: await .score(machine_id, telemetry_dict) → AnomalyResult
     """
 
     def __init__(self):
         self._states: Dict[str, MachineMLState] = {}
+        self._locks: Dict[str, asyncio.Lock] = {}
         self._fallback = AnomalyDetector()
         self._load_persisted_models()
         logger.info(
@@ -263,6 +266,16 @@ class MLAnomalyService:
             f"(core_metrics={CORE_METRICS}, min_train={MIN_TRAIN_SAMPLES}, "
             f"retrain_every={RETRAIN_EVERY}, model_dir={MODEL_DIR})"
         )
+
+    # ── Lock management ───────────────────────────────────────────────────────
+
+    def _get_lock(self, key: str) -> asyncio.Lock:
+        """Return (creating if needed) the asyncio.Lock for a machine key."""
+        if key not in self._locks:
+            self._locks[key] = asyncio.Lock()
+        return self._locks[key]
+
+    # ── Startup ───────────────────────────────────────────────────────────────
 
     def _load_persisted_models(self) -> None:
         """
@@ -286,18 +299,25 @@ class MLAnomalyService:
         except Exception as e:
             logger.warning(f"Startup model load error (non-fatal): {e}")
 
+    # ── State ─────────────────────────────────────────────────────────────────
+
     def _get_state(self, machine_id: str) -> MachineMLState:
         key = _normalize_machine_id(machine_id)
         if key not in self._states:
             self._states[key] = MachineMLState()
         return self._states[key]
 
-    def score(
+    # ── Scoring ───────────────────────────────────────────────────────────────
+
+    async def score(
         self,
         machine_id: str,
         telemetry: Dict[str, Optional[float]],
     ) -> AnomalyResult:
-        """Score a telemetry sample. Always returns AnomalyResult."""
+        """
+        Async score method. Safe for concurrent calls from the FastAPI event loop.
+        The per-machine lock serialises retraining only — scoring reads are lock-free.
+        """
 
         z_result = self._fallback.score(machine_id, telemetry)
 
@@ -305,26 +325,32 @@ class MLAnomalyService:
         if features is None:
             return z_result
 
+        key = _normalize_machine_id(machine_id)
         state = self._get_state(machine_id)
-        state.buffer.append(features)
-        state.samples_since_retrain += 1
 
-        should_train = (
-            (state.samples_since_retrain >= RETRAIN_EVERY and state.ready)
-            or (not state.model_available and state.ready)
-        )
-        if should_train:
-            new_model, new_scaler = _train(state)
-            if new_model is not None:
-                state.model = new_model
-                state.scaler = new_scaler
-                state.samples_since_retrain = 0
-                state.total_trained_on = len(state.buffer)
-                _save_model(machine_id, new_model, new_scaler)
-                logger.info(
-                    f"IF model retrained for machine={machine_id} "
-                    f"on {state.total_trained_on} samples"
+        async with self._get_lock(key):
+            state.buffer.append(features)
+            state.samples_since_retrain += 1
+
+            should_train = (
+                (state.samples_since_retrain >= RETRAIN_EVERY and state.ready)
+                or (not state.model_available and state.ready)
+            )
+            if should_train:
+                loop = asyncio.get_running_loop()
+                new_model, new_scaler = await loop.run_in_executor(
+                    None, _train, state
                 )
+                if new_model is not None and new_scaler is not None:
+                    state.model = new_model
+                    state.scaler = new_scaler
+                    state.samples_since_retrain = 0
+                    state.total_trained_on = len(state.buffer)
+                    _save_model(machine_id, new_model, new_scaler)
+                    logger.info(
+                        f"IF model retrained for machine={machine_id} "
+                        f"on {state.total_trained_on} samples"
+                    )
 
         if not state.model_available:
             state.score_history.append(z_result.composite_score)
@@ -334,10 +360,10 @@ class MLAnomalyService:
             X_raw = np.array([features], dtype=float)
             X_scaled = state.scaler.transform(X_raw)
             raw = float(state.model.score_samples(X_scaled)[0])
-            ml_score = _map_raw_score_to_anomaly(raw, state.model)
+            ml_score = float(_map_raw_score_to_anomaly(raw, state.model))
 
-            is_anomaly = ml_score >= ANOMALY_THRESHOLD
-            is_critical = ml_score >= CRITICAL_THRESHOLD
+            is_anomaly = bool(ml_score >= ANOMALY_THRESHOLD)
+            is_critical = bool(ml_score >= CRITICAL_THRESHOLD)
 
             top_contributors = _rank_feature_contributions(
                 z_result.metric_scores,
@@ -386,9 +412,11 @@ class MLAnomalyService:
             return result
 
         except Exception as e:
-            logger.warning(f"ML scoring failed for {machine_id}, using z-score: {e}")
+            logger.warning(f"ML scoring failed for {machine_id}, fallback: {e}")
             state.score_history.append(z_result.composite_score)
             return z_result
+
+    # ── Accessors ─────────────────────────────────────────────────────────────
 
     def get_score_trend(self, machine_id: str) -> dict:
         state = self._get_state(machine_id)
@@ -417,6 +445,8 @@ class MLAnomalyService:
         key = _normalize_machine_id(machine_id)
         if key in self._states:
             del self._states[key]
+        if key in self._locks:
+            del self._locks[key]
         try:
             path = _model_path(machine_id)
             if path.exists():
@@ -427,6 +457,8 @@ class MLAnomalyService:
         self._fallback.reset_machine(machine_id)
         logger.info(f"ML + z-score windows reset for machine={machine_id}")
 
+
+# ── AnomalyResult patch ────────────────────────────────────────────────────────
 
 _original_to_details = AnomalyResult.to_details_dict
 
@@ -440,5 +472,7 @@ def _patched_to_details(self) -> dict:
 
 AnomalyResult.to_details_dict = _patched_to_details
 
+
+# ── Singleton ──────────────────────────────────────────────────────────────────
 
 ml_scorer = MLAnomalyService()
