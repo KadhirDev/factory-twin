@@ -257,24 +257,37 @@ function computeAnomalyFrequency(telemetry = []) {
 // CONFIDENCE (ENHANCED)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * computeConfidence (ENHANCED)
+ *
+ * Seven signals → 0–100 score:
+ *   1. Sample maturity         0–35 pts
+ *   2. Model type              10–25 pts
+ *   3. Variance stability      5–25 pts
+ *   4. Score trend direction   5–15 pts
+ *   5. Anomaly consistency     0–10 pts (NEW)
+ *   6. Correlation+ETA agree   0–8 pts  (NEW)
+ *   7. Oscillation penalty     0–15 pts deducted (NEW)
+ */
 function computeConfidence(anomalyStats, activeCorrelations = [], currentETAs = []) {
   let score = 0;
 
+  // 1. Sample maturity (0–35)
   const trainedOn = anomalyStats?.config?.ml_trained_on ?? 0;
-  const samplePts = Math.min(35, Math.round((trainedOn / 200) * 35));
-  score += samplePts;
+  score += Math.min(35, Math.round((trainedOn / 200) * 35));
 
+  // 2. Model type (10–25)
   const mlReady = anomalyStats?.config?.ml_model_ready ?? false;
   score += mlReady ? 25 : 10;
 
+  // 3. Variance stability (5–25)
   const windowStats = anomalyStats?.detector_windows ?? {};
   const stds = Object.values(windowStats)
-    .map((w) => w.std)
+    .map((w) => w?.std ?? null)
     .filter((v) => v != null && v > 0);
   const means = Object.values(windowStats)
-    .map((w) => Math.abs(w.mean ?? 0))
+    .map((w) => Math.abs(w?.mean ?? 0))
     .filter((v) => v > 0.01);
-
   let varPts = 10;
   if (stds.length > 0 && means.length > 0) {
     const avgCV =
@@ -284,31 +297,57 @@ function computeConfidence(anomalyStats, activeCorrelations = [], currentETAs = 
   }
   score += varPts;
 
+  // 4. Score trend direction (5–15)
   const scoreTrend = anomalyStats?.score_trend?.trend ?? "stable";
   score += scoreTrend === "stable" ? 15 : scoreTrend === "falling" ? 12 : 5;
 
+  // 5. Anomaly consistency (0–10)
+  // A history of multiple anomalies means the detector is firing consistently,
+  // not on isolated noise — this boosts confidence in the signal.
   const anomalyCount = anomalyStats?.anomaly_count ?? 0;
-  const consistencyPts =
+  score +=
     anomalyCount >= 10 ? 10 :
     anomalyCount >= 5 ? 6 :
     anomalyCount >= 2 ? 3 : 0;
-  score += consistencyPts;
 
-  const etaMetricSet = new Set((currentETAs || []).map((e) => e.key));
+  // 6. Correlation + ETA agreement (0–8)
+  // If correlated metrics AND ETA projections point at the same metric,
+  // two independent signals agree — confidence boost.
+  const etaMetricSet = new Set((currentETAs || []).map((e) => e?.key).filter(Boolean));
   const agreementCount = (activeCorrelations || []).filter(
-    (c) => etaMetricSet.has(c.a) || etaMetricSet.has(c.b)
+    (c) => etaMetricSet.has(c?.a) || etaMetricSet.has(c?.b)
   ).length;
   score += Math.min(8, agreementCount * 4);
+
+  // 7. Oscillation penalty (−0 to −15)
+  // If the anomaly score has been zigzagging (many direction changes in the
+  // recent window), the signal is noisy and less trustworthy.
+  const recentScores = anomalyStats?.score_trend?.scores ?? [];
+  let oscillationPenalty = 0;
+  if (recentScores.length >= 5) {
+    let dirChanges = 0;
+    for (let i = 2; i < recentScores.length; i++) {
+      const prevDir = recentScores[i - 1] > recentScores[i - 2];
+      const currDir = recentScores[i] > recentScores[i - 1];
+      if (prevDir !== currDir) dirChanges++;
+    }
+    if (dirChanges >= 4) oscillationPenalty = 15;
+    else if (dirChanges >= 2) oscillationPenalty = 7;
+  }
+  score = Math.max(0, score - oscillationPenalty);
 
   const clamped = Math.min(100, Math.max(0, score));
   const label = clamped >= 66 ? "High" : clamped >= 36 ? "Moderate" : "Low";
 
+  const hasAgreement = agreementCount > 0;
+  const hasOscillation = oscillationPenalty > 0;
+
   const detail =
     label === "High"
-      ? `${trainedOn} training samples. Isolation Forest active. Baseline stable.${agreementCount > 0 ? " Correlation and ETA signals agree." : ""}`
+      ? `${trainedOn} training samples. Isolation Forest active. Baseline stable.${hasAgreement ? " Correlated and ETA signals in agreement." : ""}`
       : label === "Moderate"
-      ? `${trainedOn} training samples. ${mlReady ? "Isolation Forest active." : "Z-score fallback active."} Baseline still stabilising.`
-      : `Only ${trainedOn} training samples. ${mlReady ? "" : "Z-score fallback active."} More data needed for reliable insights.`;
+      ? `${trainedOn} training samples. ${mlReady ? "Isolation Forest active." : "Z-score fallback active."} Baseline still stabilising.${hasOscillation ? " Signal shows some oscillation." : ""}`
+      : `Only ${trainedOn} training samples. ${mlReady ? "" : "Z-score fallback active."} ${hasOscillation ? "Signal oscillation detected — treat insights as indicative only." : "More data needed for reliable analysis."}`;
 
   return { score: clamped, label, detail };
 }
@@ -1112,6 +1151,7 @@ export default function AIInsightPanel({
       anomalyStats?.anomaly_count,
       activeCorrelations?.length,
       currentETAs?.length,
+      anomalyStats?.score_trend?.scores,
     ]
   );
 

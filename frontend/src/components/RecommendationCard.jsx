@@ -1,13 +1,14 @@
 /**
  * RecommendationCard
  *
- * Deterministic rule engine with scored + ranked actions.
+ * Deterministic rule engine: conditions → scored + ranked operator actions.
  *
- * Action score formula:
- *   urgency_base  (critical=100, warning=60, info=20)
- * + eta_pts       (critETA ≤5min → 30, ≤15 → 20, ≤30 → 10)
- * + corr_pts      (correlation signal present for this rule → 15)
- * × confidence_mult (High=1.0, Moderate=0.85, Low=0.7)
+ * Per rule:
+ *   urgency     — critical / warning / info (visual severity)
+ *   impact      — High / Medium / Low (consequence of inaction)
+ *   consequence — what happens if this is ignored (1 sentence)
+ *   why         — why this action is ranked first
+ *   actionScore — urgency_base + eta_pts + corr_pts × confidence_mult
  */
 
 import React, { useMemo, useState } from "react";
@@ -19,26 +20,29 @@ import {
   Zap,
   Wind,
   RotateCcw,
-  AlertTriangle,
   CheckCircle,
   ChevronDown,
   ChevronUp,
   Clock,
   Star,
+  AlertOctagon,
 } from "lucide-react";
 
 // ── Rule table ────────────────────────────────────────────────────────────────
 const RULES = [
-  // Oil Level
+  // ── Oil Level ─────────────────────────────────────────────────────────────
   {
     id: "oil_critical",
     condition: (ctx) => ctx.metrics.oil_level != null && ctx.metrics.oil_level <= 10,
     urgency: "critical",
+    impact: "High",
     icon: Droplets,
     title: "Refill Lubrication — Immediate",
     action: "Stop machine and refill oil to operating level (≥ 40%).",
     rationale: "Oil below 10% causes metal-to-metal friction and thermal runaway.",
-    why: "Oil is critically low — immediate risk of irreversible bearing damage.",
+    consequence:
+      "Ignoring this will cause irreversible bearing seizure within minutes of continued operation.",
+    why: "Oil is critically low — immediate risk of catastrophic bearing failure.",
     priority: 1,
     correlationKey: null,
   },
@@ -49,25 +53,31 @@ const RULES = [
       ctx.metrics.oil_level > 10 &&
       ctx.metrics.oil_level <= 20,
     urgency: "warning",
+    impact: "Medium",
     icon: Droplets,
     title: "Schedule Lubrication Refill",
     action: "Plan lubrication service within the next maintenance window.",
     rationale: "Low oil (10–20%) increases friction and wear rates significantly.",
+    consequence:
+      "Continued operation will accelerate bearing wear and shorten component lifespan.",
     why: "Oil approaching critical level — early action prevents unplanned downtime.",
     priority: 3,
     correlationKey: null,
   },
 
-  // Temperature
+  // ── Temperature ───────────────────────────────────────────────────────────
   {
     id: "temp_critical",
     condition: (ctx) => ctx.metrics.temperature != null && ctx.metrics.temperature >= 95,
     urgency: "critical",
+    impact: "High",
     icon: ThermometerSun,
     title: "Cooling System — Urgent Inspection",
     action:
       "Reduce load immediately. Inspect coolant flow, heat exchangers, and fan operation.",
     rationale: "Temperature ≥ 95°C risks component damage and thermal protection tripping.",
+    consequence:
+      "Insulation breakdown and thermal trip will cause unplanned shutdown and potential motor damage.",
     why: "Temperature at critical threshold — component failure imminent without intervention.",
     priority: 2,
     correlationKey: null,
@@ -79,10 +89,13 @@ const RULES = [
       ctx.metrics.temperature >= 80 &&
       ctx.metrics.temperature < 95,
     urgency: "warning",
+    impact: "Medium",
     icon: ThermometerSun,
     title: "Check Cooling System",
     action: "Verify coolant level and flow. Clean heat exchanger fins if blocked.",
     rationale: "Operating at 80–95°C accelerates insulation and seal degradation.",
+    consequence:
+      "Prolonged high temperature shortens motor lifespan and risks reaching critical threshold.",
     why: "Temperature above warning level — cooling maintenance reduces further risk.",
     priority: 5,
     correlationKey: null,
@@ -92,24 +105,30 @@ const RULES = [
     condition: (ctx) =>
       ctx.etaMap.temperature?.etaCrit != null && ctx.etaMap.temperature.etaCrit <= 15,
     urgency: "warning",
+    impact: "High",
     icon: Clock,
     title: "Temperature Rising — Pre-emptive Action",
     action: "Reduce load or increase cooling before critical threshold is reached.",
     rationale: "Projected to reach critical temperature soon based on current trend.",
+    consequence:
+      "If unchecked, critical threshold breach will trigger thermal protection and force unplanned shutdown.",
     why: "ETA to critical temperature is short — pre-empting now costs less than reacting after.",
     priority: 4,
     correlationKey: null,
   },
 
-  // Vibration
+  // ── Vibration ─────────────────────────────────────────────────────────────
   {
     id: "vibration_critical",
     condition: (ctx) => ctx.metrics.vibration != null && ctx.metrics.vibration >= 1.0,
     urgency: "critical",
+    impact: "High",
     icon: Gauge,
     title: "Mechanical Inspection — Rotor / Bearings",
     action: "Shut down and inspect bearings, shaft alignment, and rotor balance.",
     rationale: "Vibration ≥ 1.0 indicates resonance risk and imminent bearing failure.",
+    consequence:
+      "Continued operation causes accelerating bearing damage, potential rotor contact, and machine destruction.",
     why: "Critical vibration level reached — continued operation will accelerate damage.",
     priority: 2,
     correlationKey: null,
@@ -121,24 +140,30 @@ const RULES = [
       ctx.metrics.vibration >= 0.5 &&
       ctx.metrics.vibration < 1.0,
     urgency: "warning",
+    impact: "Medium",
     icon: Gauge,
     title: "Inspect Rotor Balance",
     action: "Perform vibration analysis. Check for loose fasteners and worn bearings.",
     rationale: "Sustained vibration at 0.5–1.0 leads to fatigue failure in rotating parts.",
+    consequence:
+      "Unresolved vibration will progressively damage bearings and ultimately require full rotor replacement.",
     why: "Vibration above warning threshold — early mechanical inspection prevents escalation.",
     priority: 6,
     correlationKey: null,
   },
 
-  // RPM
+  // ── RPM ───────────────────────────────────────────────────────────────────
   {
     id: "rpm_high",
     condition: (ctx) => ctx.metrics.rpm != null && ctx.metrics.rpm >= 1800,
     urgency: "warning",
+    impact: "Medium",
     icon: RotateCcw,
     title: "Reduce Machine Speed",
     action: "Lower operational RPM to within the rated range (< 1800 rpm).",
-    rationale: "Over-speed stresses bearings, seals, and drive components.",
+    rationale: "Over-speed operation stresses bearings, seals, and drive components.",
+    consequence:
+      "Sustained over-speed causes premature seal failure and drive component fatigue.",
     why: "RPM exceeds rated limit — speed reduction directly eliminates the stress source.",
     priority: 7,
     correlationKey: null,
@@ -147,24 +172,30 @@ const RULES = [
     id: "rpm_vibration_correlation",
     condition: (ctx) => ctx.correlatedPairs.includes("rpm+vibration"),
     urgency: "warning",
+    impact: "High",
     icon: RotateCcw,
     title: "Inspect Rotor — Speed-Vibration Link Detected",
     action: "Perform balance check at operating speed. Verify coupling alignment.",
     rationale: "Simultaneous RPM and vibration rise suggests resonance or imbalance.",
+    consequence:
+      "Unresolved resonance causes exponentially increasing vibration, leading to rapid bearing failure.",
     why: "Both signals rising together confirms mechanical imbalance — not a transient event.",
     priority: 4,
     correlationKey: "rpm+vibration",
   },
 
-  // Pressure
+  // ── Pressure ──────────────────────────────────────────────────────────────
   {
     id: "pressure_critical",
     condition: (ctx) => ctx.metrics.pressure != null && ctx.metrics.pressure >= 9.0,
     urgency: "critical",
+    impact: "High",
     icon: Wind,
     title: "Relieve System Pressure — Immediate",
     action: "Open pressure relief valve. Inspect pump and line blockages.",
     rationale: "Pressure ≥ 9 bar exceeds design limits. Risk of seal failure.",
+    consequence:
+      "Above design pressure causes seal rupture, fluid loss, and possible pipe burst — safety hazard.",
     why: "System pressure above safety limit — immediate relief prevents catastrophic failure.",
     priority: 1,
     correlationKey: null,
@@ -176,25 +207,31 @@ const RULES = [
       ctx.metrics.pressure >= 7.0 &&
       ctx.metrics.pressure < 9.0,
     urgency: "warning",
+    impact: "Low",
     icon: Wind,
     title: "Monitor Hydraulic Pressure",
     action: "Check for partial blockage, filter fouling, or pump wear.",
     rationale: "Pressure above 7 bar indicates resistance in the hydraulic circuit.",
+    consequence:
+      "Unresolved pressure elevation will progressively stress seals and may reach critical level.",
     why: "Elevated pressure trend warrants investigation before it reaches critical level.",
     priority: 8,
     correlationKey: null,
   },
 
-  // Power
+  // ── Power ─────────────────────────────────────────────────────────────────
   {
     id: "power_critical",
     condition: (ctx) =>
       ctx.metrics.power_consumption != null && ctx.metrics.power_consumption >= 12,
     urgency: "critical",
+    impact: "High",
     icon: Zap,
     title: "Electrical Load — Emergency Reduction",
     action: "Reduce load or shut down to prevent motor overload trip.",
     rationale: "Power draw ≥ 12 kW exceeds rated capacity.",
+    consequence:
+      "Motor overload trip forces emergency shutdown and may damage motor windings.",
     why: "Overload condition active — thermal protection will trip without load reduction.",
     priority: 2,
     correlationKey: null,
@@ -203,31 +240,37 @@ const RULES = [
     id: "power_temp_correlation",
     condition: (ctx) => ctx.correlatedPairs.includes("power_consumption+temperature"),
     urgency: "warning",
+    impact: "High",
     icon: Zap,
     title: "Thermal-Electric Runaway Risk",
     action: "Reduce electrical load and verify cooling system simultaneously.",
     rationale: "Power and temperature rising together indicates thermal-electric stress.",
+    consequence:
+      "Left unaddressed, the thermal-electric loop accelerates until thermal protection trips or winding damage occurs.",
     why: "Correlated rise in both signals suggests a reinforcing loop — must address both simultaneously.",
     priority: 3,
     correlationKey: "power_consumption+temperature",
   },
 
-  // All clear
+  // ── All clear ─────────────────────────────────────────────────────────────
   {
     id: "all_clear",
     condition: (ctx) => ctx.anomalyScore == null || ctx.anomalyScore < 1.5,
     urgency: "info",
+    impact: null,
     icon: CheckCircle,
     title: "No Immediate Action Required",
     action: "Continue standard monitoring. Schedule preventive maintenance as planned.",
     rationale: "All metrics within normal operating ranges.",
+    consequence: null,
     why: null,
     priority: 99,
     correlationKey: null,
   },
 ];
 
-// ── Urgency styles ────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
+
 const URGENCY_STYLE = {
   critical: {
     border: "border-red-300",
@@ -258,7 +301,14 @@ const URGENCY_STYLE = {
   },
 };
 
+const IMPACT_STYLE = {
+  High: "bg-red-100 text-red-700 border-red-300",
+  Medium: "bg-yellow-100 text-yellow-700 border-yellow-300",
+  Low: "bg-gray-100 text-gray-500 border-gray-300",
+};
+
 // ── Scoring ───────────────────────────────────────────────────────────────────
+
 const URGENCY_BASE = { critical: 100, warning: 60, info: 20 };
 const CONF_MULT = { High: 1.0, Moderate: 0.85, Low: 0.7 };
 
@@ -285,6 +335,7 @@ function buildContext(telemetry, correlations, etaItems, anomalyScore) {
   (etaItems || []).forEach((e) => {
     etaMap[e.key] = e;
   });
+
   return {
     metrics: {
       temperature: latest.temperature,
@@ -311,6 +362,7 @@ export default function RecommendationCard({
   maxVisible = 3,
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [showConseq, setShowConseq] = useState(null);
 
   const confidenceLabel = confidence?.label ?? "Low";
 
@@ -369,7 +421,7 @@ export default function RecommendationCard({
         </span>
       </div>
 
-      {/* ── Recommended First Action banner ─────────────────────────── */}
+      {/* ── Recommended First Action ─────────────────────────────────── */}
       {firstAction && firstAction.id !== "all_clear" && (
         <div className="mb-2 rounded-xl border-2 border-indigo-300 bg-indigo-50 overflow-hidden">
           <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-100 border-b border-indigo-200">
@@ -380,14 +432,27 @@ export default function RecommendationCard({
             <span className="text-[10px] font-mono text-indigo-400 ml-1">
               score {firstAction.actionScore}
             </span>
-            <span
-              className={`ml-auto text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${
-                URGENCY_STYLE[firstAction.urgency]?.badge ?? ""
-              }`}
-            >
-              {firstAction.urgency}
-            </span>
+
+            <div className="ml-auto flex items-center gap-1.5">
+              {firstAction.impact && (
+                <span
+                  className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${
+                    IMPACT_STYLE[firstAction.impact] ?? ""
+                  }`}
+                >
+                  {firstAction.impact} impact
+                </span>
+              )}
+              <span
+                className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${
+                  URGENCY_STYLE[firstAction.urgency]?.badge ?? ""
+                }`}
+              >
+                {firstAction.urgency}
+              </span>
+            </div>
           </div>
+
           <div className="px-3 py-3">
             <div className="flex items-center gap-2 mb-1">
               {React.createElement(firstAction.icon, {
@@ -398,15 +463,39 @@ export default function RecommendationCard({
                 {firstAction.title}
               </span>
             </div>
+
             <p className="text-xs font-medium text-indigo-800 mb-1">
               → {firstAction.action}
             </p>
-            <p className="text-xs text-indigo-600 italic">{firstAction.rationale}</p>
+            <p className="text-xs text-indigo-600 italic mb-1">
+              {firstAction.rationale}
+            </p>
+
             {firstAction.why && (
-              <p className="text-[10px] text-indigo-500 mt-1.5 border-t border-indigo-200 pt-1.5">
+              <p className="text-[10px] text-indigo-500 border-t border-indigo-200 pt-1.5 mb-1">
                 <span className="font-semibold">Why first: </span>
                 {firstAction.why}
               </p>
+            )}
+
+            {firstAction.consequence && (
+              <>
+                <button
+                  onClick={() =>
+                    setShowConseq(showConseq === firstAction.id ? null : firstAction.id)
+                  }
+                  className="text-[10px] text-indigo-400 hover:text-indigo-600 flex items-center gap-1 transition-colors mt-1"
+                >
+                  <AlertOctagon size={10} />
+                  {showConseq === firstAction.id ? "Hide" : "What if ignored?"}
+                </button>
+
+                {showConseq === firstAction.id && (
+                  <p className="text-[10px] text-red-600 bg-red-50 rounded px-2 py-1.5 mt-1 border border-red-200">
+                    ⚠ {firstAction.consequence}
+                  </p>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -417,8 +506,12 @@ export default function RecommendationCard({
         {visible.map((rec) => {
           const s = URGENCY_STYLE[rec.urgency] || URGENCY_STYLE.info;
           const Icon = rec.icon;
+
           return (
-            <div key={rec.id} className={`rounded-xl border overflow-hidden ${s.border} ${s.bg}`}>
+            <div
+              key={rec.id}
+              className={`rounded-xl border overflow-hidden ${s.border} ${s.bg}`}
+            >
               <div className="flex items-start gap-0">
                 <div className={`w-1 self-stretch shrink-0 ${s.stripe}`} />
                 <div className="flex-1 px-3 py-3">
@@ -429,10 +522,22 @@ export default function RecommendationCard({
                         {rec.title}
                       </span>
                     </div>
+
                     <div className="flex items-center gap-1.5 shrink-0">
                       <span className="text-[10px] font-mono text-gray-400">
                         {rec.actionScore}
                       </span>
+
+                      {rec.impact && (
+                        <span
+                          className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${
+                            IMPACT_STYLE[rec.impact] ?? ""
+                          }`}
+                        >
+                          {rec.impact}
+                        </span>
+                      )}
+
                       <span
                         className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${s.badge}`}
                       >
@@ -440,10 +545,12 @@ export default function RecommendationCard({
                       </span>
                     </div>
                   </div>
+
                   <p className={`text-xs font-medium mb-1 ${s.text}`}>
                     → {rec.action}
                   </p>
                   <p className="text-xs text-gray-500 italic">{rec.rationale}</p>
+
                   {rec.why && (
                     <p className="text-[10px] text-gray-400 mt-1 flex items-start gap-1">
                       <span className="w-1 h-1 rounded-full bg-gray-300 inline-block mt-1 shrink-0" />
@@ -452,6 +559,26 @@ export default function RecommendationCard({
                         {rec.why}
                       </span>
                     </p>
+                  )}
+
+                  {rec.consequence && (
+                    <>
+                      <button
+                        onClick={() =>
+                          setShowConseq(showConseq === rec.id ? null : rec.id)
+                        }
+                        className="text-[10px] text-gray-400 hover:text-gray-600 flex items-center gap-1 mt-1.5 transition-colors"
+                      >
+                        <AlertOctagon size={10} />
+                        {showConseq === rec.id ? "Hide" : "What if ignored?"}
+                      </button>
+
+                      {showConseq === rec.id && (
+                        <p className="text-[10px] text-red-600 bg-red-50 rounded px-2 py-1.5 mt-1 border border-red-200">
+                          ⚠ {rec.consequence}
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -470,6 +597,7 @@ export default function RecommendationCard({
           Show {hidden} more recommendation{hidden !== 1 ? "s" : ""}
         </button>
       )}
+
       {expanded && rest.length > maxVisible - 1 && (
         <button
           onClick={() => setExpanded(false)}
