@@ -535,6 +535,61 @@ function deriveCauseSummary(anomalies, liveMetrics) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TIME-TO-ACT URGENCY DERIVATION
+// Synthesises ETA data + riskIndex into a human-readable urgency label.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * deriveUrgencyLabel
+ *
+ * Returns a configuration object for the TimeToActBadge.
+ * Priority: explicit ETA proximity > riskIndex level.
+ *
+ * Hidden when riskIndex ≤ 10 (system stable).
+ */
+function deriveUrgencyLabel(etaItems, riskIndex) {
+  const critETAs = (etaItems || [])
+    .map((e) => e?.etaCrit)
+    .filter((v) => v != null);
+  const minCrit = critETAs.length > 0 ? Math.min(...critETAs) : null;
+
+  if (riskIndex >= 70 || (minCrit != null && minCrit <= 5)) {
+    return {
+      label:   "Immediate Action Required",
+      sub:     minCrit != null ? `Critical threshold in ~${minCrit} min` : "Critical state — act now",
+      bg:      "bg-red-600",
+      text:    "text-white",
+      subText: "text-red-100",
+      level:   "immediate",
+    };
+  }
+
+  if (riskIndex >= 40 || (minCrit != null && minCrit <= 15)) {
+    return {
+      label:   "Act Urgently",
+      sub:     minCrit != null ? `~${minCrit} min to critical threshold` : "High risk — act within minutes",
+      bg:      "bg-orange-500",
+      text:    "text-white",
+      subText: "text-orange-100",
+      level:   "urgent",
+    };
+  }
+
+  if (riskIndex >= 20 || (minCrit != null && minCrit <= 30)) {
+    return {
+      label:   "Act Soon",
+      sub:     minCrit != null ? `~${minCrit} min to critical threshold` : "Elevated risk — act this session",
+      bg:      "bg-yellow-400",
+      text:    "text-yellow-900",
+      subText: "text-yellow-700",
+      level:   "soon",
+    };
+  }
+
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TOP INSIGHT BANNER — SHORT HEADLINE DERIVATION
 //
 // Converts the full insight text into a concise banner headline (≤ 60 chars).
@@ -586,10 +641,31 @@ function SectionLabel({ label }) {
   );
 }
 
+// ── TimeToActBadge ─────────────────────────────────────────────────────────────
+// Rendered between ConfidenceBadge and RiskIndexBar.
+// Gives operators an instant answer to "how urgent is this?" before reading anything else.
+// Hidden when riskIndex ≤ 10 (stable, no action needed).
+function TimeToActBadge({ etaItems, riskIndex }) {
+  const cfg = deriveUrgencyLabel(etaItems, riskIndex);
+  if (!cfg) return null;
+
+  return (
+    <div className={`w-full rounded-xl px-4 py-2.5 mb-4 flex items-center justify-between gap-3 ${cfg.bg}`}>
+      <div className="flex items-center gap-2 min-w-0">
+        <Clock size={14} className={cfg.text} />
+        <span className={`text-xs font-bold ${cfg.text}`}>{cfg.label}</span>
+      </div>
+      <span className={`text-[10px] font-medium shrink-0 ${cfg.subText}`}>
+        {cfg.sub}
+      </span>
+    </div>
+  );
+}
+
 // ── TopInsightBanner ───────────────────────────────────────────────────────────
 // Shown when riskIndex ≥ 40. Answers "what is happening?" in < 3 seconds.
 // Uses getShortHeadline so banner text is always concise.
-function TopInsightBanner({ insights, riskIndex }) {
+function TopInsightBanner({ insights, riskIndex, minCritETA }) {
   if ((riskIndex ?? 0) < 40) return null;
   if (!insights?.length) return null;
 
@@ -620,6 +696,17 @@ function TopInsightBanner({ insights, riskIndex }) {
         <p className={`text-xs font-semibold leading-snug ${isCritical ? "text-red-800" : "text-orange-800"}`}>
           {headline}
         </p>
+        {minCritETA != null && (
+          <span className={`mt-1.5 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border
+            ${isCritical
+              ? "bg-red-100 text-red-700 border-red-300"
+              : "bg-orange-100 text-orange-700 border-orange-300"
+            }`}
+          >
+            <Clock size={9} />
+            ~{minCritETA} min to critical threshold
+          </span>
+        )}
       </div>
       <span
         className={`shrink-0 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border self-start mt-0.5
@@ -1287,6 +1374,13 @@ export default function AIInsightPanel({
     [anomalies?.length, liveMetrics]
   );
 
+  const minCritETA = useMemo(() => {
+    const critETAs = (currentETAs || [])
+      .map((e) => e?.etaCrit)
+      .filter((v) => v != null);
+    return critETAs.length > 0 ? Math.min(...critETAs) : null;
+  }, [currentETAs]);
+
   const showSensorDetails = (riskData?.index ?? 0) > 10 || (anomalies || []).length > 0;
   const hasSensorSection  = showSensorDetails ||
                             activeCorrelations.length > 0 ||
@@ -1349,13 +1443,21 @@ export default function AIInsightPanel({
         />
       </div>
 
+      {/* ── Time-to-Act Badge ────────────────────────────────────────────────
+          Hidden when riskIndex ≤ 10. Gives operators instant urgency context. */}
+      <TimeToActBadge etaItems={currentETAs} riskIndex={riskData?.index ?? 0} />
+
       {/* ── Risk index + momentum ────────────────────────────────────────────
           RiskIndexBar now renders a red ring when Critical Escalation is active */}
       <RiskIndexBar riskData={riskData} momentum={momentumData} />
 
       {/* ── Top Insight Banner — fast-path answer when riskIndex ≥ 40 ─────────
           getShortHeadline keeps banner text concise even for anomaly-burst prose */}
-      <TopInsightBanner insights={insights} riskIndex={riskData?.index ?? 0} />
+      <TopInsightBanner
+        insights   = {insights}
+        riskIndex  = {riskData?.index ?? 0}
+        minCritETA = {minCritETA}
+      />
 
       {/* ── SECTION: Diagnostics & Actions ─────────────────────────────────── */}
       <SectionLabel label="Diagnostics & Actions" />
