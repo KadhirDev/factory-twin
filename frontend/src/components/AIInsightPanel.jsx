@@ -869,7 +869,15 @@ function TopRiskyMetric({ telemetry }) {
 // ── AnomalyClusters ───────────────────────────────────────────────────────────
 function AnomalyClusters({ anomalies }) {
   const clusters = useMemo(() => {
-    const safe = (anomalies || []).slice().sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    const safe = (anomalies || [])
+      .filter((a) => {
+        if (!a?.timestamp) return false;
+        const d = new Date(a.timestamp);
+        return !Number.isNaN(d.getTime());
+      })
+      .slice()
+      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
     if (!safe.length) return [];
     const result = [];
     let current = [safe[0]];
@@ -983,10 +991,11 @@ function FeatureContributors({ anomalies = [] }) {
           const absZ   = Math.abs(c.z_score ?? 0);
           const barPct = Math.min(100, (absZ / 5.0) * 100);
           const barCol = absZ >= 4.0 ? "bg-red-500" : absZ >= 2.8 ? "bg-orange-400" : "bg-yellow-300";
+          const displayLabel = c.label ?? c.metric ?? "Sensor";
           return (
             <div key={i}>
               <div className="flex items-center justify-between text-xs mb-0.5">
-                <span className="font-medium text-orange-800">{c.label ?? c.metric}</span>
+                <span className="font-medium text-orange-800">{displayLabel}</span>
                 <span className={`font-mono text-xs ${absZ >= 4.0 ? "text-red-700" : "text-orange-600"}`}>
                   {(c.z_score ?? 0) > 0 ? "+" : ""}{(c.z_score ?? 0).toFixed(2)}σ
                 </span>
