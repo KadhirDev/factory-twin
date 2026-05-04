@@ -1280,7 +1280,9 @@ function PriorityInsights({ insights, riskIndex = 0 }) {
         </div>
       </div>
       <div className="space-y-2">
-        {visible.map((ins, i) => <InsightRow key={i} insight={ins} />)}
+        {visible.map((ins) => (
+          <InsightRow key={ins.text.slice(0, 50)} insight={ins} />
+        ))}
       </div>
       {hidden > 0 && !expanded && (
         <button
