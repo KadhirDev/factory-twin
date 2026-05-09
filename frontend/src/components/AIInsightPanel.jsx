@@ -51,10 +51,10 @@ const METRIC_CONFIG = {
 };
 
 const CORRELATION_PAIRS = [
-  { a: "temperature", b: "vibration",         label: "Temperature & Vibration",  implication: "Possible bearing overload — check lubrication."             },
-  { a: "temperature", b: "power_consumption", label: "Temperature & Power",      implication: "Thermal runaway risk — inspect cooling system."             },
-  { a: "rpm",         b: "vibration",         label: "RPM & Vibration",          implication: "Resonance frequency risk — reduce speed or balance rotor."  },
-  { a: "pressure",    b: "power_consumption", label: "Pressure & Power",         implication: "Hydraulic stress — check seals and pump efficiency."        },
+  { a: "temperature", b: "vibration",         label: "Temperature & Vibration",  implication: "Possible bearing overload — check lubrication."            },
+  { a: "temperature", b: "power_consumption", label: "Temperature & Power",      implication: "Thermal runaway risk — inspect cooling system."            },
+  { a: "rpm",         b: "vibration",         label: "RPM & Vibration",          implication: "Resonance frequency risk — reduce speed or balance rotor." },
+  { a: "pressure",    b: "power_consumption", label: "Pressure & Power",         implication: "Hydraulic stress — check seals and pump efficiency."       },
 ];
 
 const SEVERITY = {
@@ -190,15 +190,12 @@ function computeAnomalyFrequency(telemetry = []) {
 function computeConfidence(anomalyStats, activeCorrelations = [], currentETAs = []) {
   let score = 0;
 
-  // 1. Sample maturity (0–35)
   const trainedOn = anomalyStats?.config?.ml_trained_on ?? 0;
   score += Math.min(35, Math.round((trainedOn / 200) * 35));
 
-  // 2. Model type (10–25)
   const mlReady = anomalyStats?.config?.ml_model_ready ?? false;
   score += mlReady ? 25 : 10;
 
-  // 3. Variance stability (5–25)
   const windowStats = anomalyStats?.detector_windows ?? {};
   const stds  = Object.values(windowStats).map((w) => w?.std  ?? null).filter((v) => v != null && v > 0);
   const means = Object.values(windowStats).map((w) => Math.abs(w?.mean ?? 0)).filter((v) => v > 0.01);
@@ -210,25 +207,21 @@ function computeConfidence(anomalyStats, activeCorrelations = [], currentETAs = 
   }
   score += varPts;
 
-  // 4. Score trend direction (5–15)
   const scoreTrend = anomalyStats?.score_trend?.trend ?? "stable";
   score += scoreTrend === "stable" ? 15 : scoreTrend === "falling" ? 12 : 5;
 
-  // 5. Anomaly consistency (0–10)
   const anomalyCount = anomalyStats?.anomaly_count ?? 0;
   score +=
     anomalyCount >= 10 ? 10 :
     anomalyCount >= 5  ? 6  :
     anomalyCount >= 2  ? 3  : 0;
 
-  // 6. Correlation + ETA agreement (0–8)
   const etaMetricSet = new Set((currentETAs || []).map((e) => e?.key).filter(Boolean));
   const agreementCount = (activeCorrelations || []).filter(
     (c) => etaMetricSet.has(c?.a) || etaMetricSet.has(c?.b)
   ).length;
   score += Math.min(8, agreementCount * 4);
 
-  // 7. Oscillation penalty (−0 to −15)
   const recentScores = anomalyStats?.score_trend?.scores ?? [];
   let oscillationPenalty = 0;
   if (recentScores.length >= 5) {
@@ -536,17 +529,8 @@ function deriveCauseSummary(anomalies, liveMetrics) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TIME-TO-ACT URGENCY DERIVATION
-// Synthesises ETA data + riskIndex into a human-readable urgency label.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * deriveUrgencyLabel
- *
- * Returns a configuration object for the TimeToActBadge.
- * Priority: explicit ETA proximity > riskIndex level.
- *
- * Hidden when riskIndex ≤ 10 (system stable).
- */
 function deriveUrgencyLabel(etaItems, riskIndex) {
   const critETAs = (etaItems || [])
     .map((e) => e?.etaCrit)
@@ -563,7 +547,6 @@ function deriveUrgencyLabel(etaItems, riskIndex) {
       level:   "immediate",
     };
   }
-
   if (riskIndex >= 40 || (minCrit != null && minCrit <= 15)) {
     return {
       label:   "Act Urgently",
@@ -574,7 +557,6 @@ function deriveUrgencyLabel(etaItems, riskIndex) {
       level:   "urgent",
     };
   }
-
   if (riskIndex >= 20 || (minCrit != null && minCrit <= 30)) {
     return {
       label:   "Act Soon",
@@ -585,24 +567,18 @@ function deriveUrgencyLabel(etaItems, riskIndex) {
       level:   "soon",
     };
   }
-
   return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TOP INSIGHT BANNER — SHORT HEADLINE DERIVATION
-//
-// Converts the full insight text into a concise banner headline (≤ 60 chars).
-// Metric threshold insights are already short; anomaly-burst prose is trimmed.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function getShortHeadline(insight) {
   if (!insight?.text) return "";
   const text = insight.text;
 
-  // Anomaly burst insight — rephrase concisely
   if (insight.icon === Zap && text.startsWith("High anomaly rate:")) {
-    // Extract count from "High anomaly rate: N recent anomalies …"
     const match = text.match(/High anomaly rate:\s*(\d+)\s*recent anomalies/);
     const count = match ? match[1] : "";
     return count
@@ -617,10 +593,9 @@ function getShortHeadline(insight) {
       : text;
   }
 
-  // All other insights: use text as-is if short, else trim at last space ≤ 65 chars
   if (text.length <= 65) return text;
-  const cut     = text.slice(0, 62).trimEnd();
-  const lastSp  = cut.lastIndexOf(" ");
+  const cut    = text.slice(0, 62).trimEnd();
+  const lastSp = cut.lastIndexOf(" ");
   return (lastSp > 30 ? cut.slice(0, lastSp) : cut) + "…";
 }
 
@@ -628,7 +603,6 @@ function getShortHeadline(insight) {
 // SUB-COMPONENTS
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── SectionLabel ──────────────────────────────────────────────────────────────
 function SectionLabel({ label }) {
   return (
     <div className="flex items-center gap-3 my-5">
@@ -641,14 +615,9 @@ function SectionLabel({ label }) {
   );
 }
 
-// ── TimeToActBadge ─────────────────────────────────────────────────────────────
-// Rendered between ConfidenceBadge and RiskIndexBar.
-// Gives operators an instant answer to "how urgent is this?" before reading anything else.
-// Hidden when riskIndex ≤ 10 (stable, no action needed).
 function TimeToActBadge({ etaItems, riskIndex }) {
   const cfg = deriveUrgencyLabel(etaItems, riskIndex);
   if (!cfg) return null;
-
   return (
     <div className={`w-full rounded-xl px-4 py-2.5 mb-4 flex items-center justify-between gap-3 ${cfg.bg}`}>
       <div className="flex items-center gap-2 min-w-0">
@@ -662,9 +631,6 @@ function TimeToActBadge({ etaItems, riskIndex }) {
   );
 }
 
-// ── TopInsightBanner ───────────────────────────────────────────────────────────
-// Shown when riskIndex ≥ 40. Answers "what is happening?" in < 3 seconds.
-// Uses getShortHeadline so banner text is always concise.
 function TopInsightBanner({ insights, riskIndex, minCritETA }) {
   if ((riskIndex ?? 0) < 40) return null;
   if (!insights?.length) return null;
@@ -679,10 +645,7 @@ function TopInsightBanner({ insights, riskIndex, minCritETA }) {
   return (
     <div
       className={`flex items-start gap-3 rounded-xl border px-4 py-3 mb-4
-        ${isCritical
-          ? "bg-red-50 border-red-300"
-          : "bg-orange-50 border-orange-300"
-        }`}
+        ${isCritical ? "bg-red-50 border-red-300" : "bg-orange-50 border-orange-300"}`}
     >
       <div className={`w-1 self-stretch rounded-full shrink-0 ${isCritical ? "bg-red-500" : "bg-orange-400"}`} />
       {isCritical
@@ -721,7 +684,6 @@ function TopInsightBanner({ insights, riskIndex, minCritETA }) {
   );
 }
 
-// ── SignalRow ─────────────────────────────────────────────────────────────────
 function SignalRow({ signal, textColor }) {
   const Icon = SIGNAL_ICONS[signal.type] || Activity;
   return (
@@ -732,7 +694,6 @@ function SignalRow({ signal, textColor }) {
   );
 }
 
-// ── InsightRow ────────────────────────────────────────────────────────────────
 function InsightRow({ insight }) {
   const [showSignals, setShowSignals] = useState(false);
 
@@ -790,7 +751,6 @@ function InsightRow({ insight }) {
   );
 }
 
-// ── WarmUpBar ─────────────────────────────────────────────────────────────────
 function WarmUpBar({ current, target }) {
   const pct = Math.min(100, Math.round((current / target) * 100));
   return (
@@ -806,7 +766,6 @@ function WarmUpBar({ current, target }) {
   );
 }
 
-// ── DetectorBadge ─────────────────────────────────────────────────────────────
 function DetectorBadge({ detectorType, mlModelReady }) {
   const isML = detectorType === "isolation_forest" || mlModelReady;
   return (
@@ -818,7 +777,6 @@ function DetectorBadge({ detectorType, mlModelReady }) {
   );
 }
 
-// ── SeverityBadge ─────────────────────────────────────────────────────────────
 function SeverityBadge({ score }) {
   const sev = getSeverity(score);
   if (!sev) return null;
@@ -829,7 +787,6 @@ function SeverityBadge({ score }) {
   );
 }
 
-// ── TopRiskyMetric ────────────────────────────────────────────────────────────
 function TopRiskyMetric({ telemetry }) {
   const latest = (telemetry || [])[0];
   if (!latest) return null;
@@ -866,14 +823,14 @@ function TopRiskyMetric({ telemetry }) {
   );
 }
 
-// ── AnomalyClusters ───────────────────────────────────────────────────────────
+// Null-safe: filters out entries with missing or unparseable timestamps before sorting.
 function AnomalyClusters({ anomalies }) {
   const clusters = useMemo(() => {
     const safe = (anomalies || [])
       .filter((a) => {
         if (!a?.timestamp) return false;
         const d = new Date(a.timestamp);
-        return !Number.isNaN(d.getTime());
+        return !isNaN(d.getTime());
       })
       .slice()
       .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
@@ -932,7 +889,6 @@ function AnomalyClusters({ anomalies }) {
   );
 }
 
-// ── ScoreTrendPanel ───────────────────────────────────────────────────────────
 function ScoreTrendPanel({ scoreTrend }) {
   if (!scoreTrend || !scoreTrend.scores?.length) return null;
   const { trend, recent_avg, peak_score, scores } = scoreTrend;
@@ -968,7 +924,7 @@ function ScoreTrendPanel({ scoreTrend }) {
   );
 }
 
-// ── FeatureContributors ───────────────────────────────────────────────────────
+// Null-safe: triple fallback label prevents "undefined" rendering.
 function FeatureContributors({ anomalies = [] }) {
   const recent = (anomalies || []).find((a) => a.anomaly_details?.top_contributors?.length > 0);
   if (!recent) return null;
@@ -988,9 +944,9 @@ function FeatureContributors({ anomalies = [] }) {
       </div>
       <div className="space-y-1.5">
         {contributors.map((c, i) => {
-          const absZ   = Math.abs(c.z_score ?? 0);
-          const barPct = Math.min(100, (absZ / 5.0) * 100);
-          const barCol = absZ >= 4.0 ? "bg-red-500" : absZ >= 2.8 ? "bg-orange-400" : "bg-yellow-300";
+          const absZ         = Math.abs(c.z_score ?? 0);
+          const barPct       = Math.min(100, (absZ / 5.0) * 100);
+          const barCol       = absZ >= 4.0 ? "bg-red-500" : absZ >= 2.8 ? "bg-orange-400" : "bg-yellow-300";
           const displayLabel = c.label ?? c.metric ?? "Sensor";
           return (
             <div key={i}>
@@ -1014,7 +970,6 @@ function FeatureContributors({ anomalies = [] }) {
   );
 }
 
-// ── PredictiveETAPanel ────────────────────────────────────────────────────────
 function PredictiveETAPanel({ etas }) {
   if (!etas?.length) return null;
   return (
@@ -1078,7 +1033,6 @@ function PredictiveETAPanel({ etas }) {
   );
 }
 
-// ── CorrelationPanel ──────────────────────────────────────────────────────────
 function CorrelationPanel({ correlations }) {
   if (!correlations?.length) return null;
   return (
@@ -1116,8 +1070,8 @@ function CorrelationPanel({ correlations }) {
   );
 }
 
-// ── AnomalyFrequencyPanel ─────────────────────────────────────────────────────
 function AnomalyFrequencyPanel({ telemetry }) {
+  // Computed inline rather than via useMemo to ensure fresh data on every render
   const freq = useMemo(() => computeAnomalyFrequency(telemetry), [telemetry]);
   if (!freq || (freq.ratePerHour === 0 && freq.recentCount === 0)) return null;
   const trendColor = freq.trend === "increasing" ? "text-red-600" : freq.trend === "decreasing" ? "text-green-600" : "text-gray-500";
@@ -1156,15 +1110,11 @@ function AnomalyFrequencyPanel({ telemetry }) {
   );
 }
 
-// ── RiskIndexBar ───────────────────────────────────────────────────────────────
-// Critical Escalation detected → border + ring upgrade on the container.
-// Uses computeMomentumLevel (imported from RiskMomentumBadge) to evaluate state.
 function RiskIndexBar({ riskData, momentum }) {
   if (!riskData) return null;
   const { index, breakdown, level } = riskData;
   const rc = RISK_COLORS[level] || RISK_COLORS.normal;
 
-  // ← NEW: detect critical escalation for container-level visual reinforcement
   const isCriticalEscalation = momentum != null
     ? computeMomentumLevel(
         momentum.direction,
@@ -1177,17 +1127,13 @@ function RiskIndexBar({ riskData, momentum }) {
   return (
     <div
       className={`rounded-xl border p-4 mb-4 ${rc.bg}
-        ${isCriticalEscalation
-          ? "border-red-500 ring-2 ring-red-300"   // ← escalation ring
-          : ""
-        }`}
+        ${isCriticalEscalation ? "border-red-500 ring-2 ring-red-300" : ""}`}
       style={isCriticalEscalation ? undefined : { borderColor: "#e5e7eb" }}
     >
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <Gauge size={15} className={rc.text} />
           <span className={`text-sm font-bold ${rc.text}`}>Risk Index</span>
-          {/* ← escalation sub-label — only in critical escalation state */}
           {isCriticalEscalation && (
             <span className="text-[10px] font-bold text-red-600 uppercase tracking-wide animate-pulse ml-1">
               All signals active
@@ -1220,7 +1166,7 @@ function RiskIndexBar({ riskData, momentum }) {
   );
 }
 
-// ── PriorityInsights ──────────────────────────────────────────────────────────
+// PriorityInsights: content-based key prevents "Why?" state transfer between rows.
 const DEFAULT_VISIBLE   = 3;
 const TYPE_WEIGHT       = { critical: 0, warning: 1, info: 2, ok: 3 };
 const CONFIDENCE_WEIGHT = { High: 0, Moderate: 1, Low: 2 };
@@ -1314,22 +1260,23 @@ export default function AIInsightPanel({
   anomalyStats = null,
   machineName  = "Machine",
 }) {
+  // ── Content-aware memos — use `telemetry` (not `telemetry?.length`) so these
+  //    recompute when sensor values change even if the reading count stays stable.
+  //    All three functions are fast pure computations; recomputing every 3s poll
+  //    costs microseconds and ensures ETAs, correlations, and frequency stay current.
   const activeCorrelations = useMemo(
     () => detectCorrelations(telemetry),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [telemetry?.length]
+    [telemetry]
   );
 
   const currentETAs = useMemo(
     () => computeETAs(telemetry),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [telemetry?.length]
+    [telemetry]
   );
 
   const freqData = useMemo(
     () => computeAnomalyFrequency(telemetry),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [telemetry?.length]
+    [telemetry]
   );
 
   const confidenceData = useMemo(
@@ -1355,10 +1302,12 @@ export default function AIInsightPanel({
     [anomalyStats?.score_trend?.trend, currentETAs?.length, freqData?.trend]
   );
 
+  // rawInsights also uses the full telemetry reference so insights update on
+  // every poll when sensor values change (not just when count changes).
   const rawInsights = useMemo(
     () => generateInsights(telemetry, anomalies, anomalyStats),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [telemetry?.length, anomalies?.length, anomalyStats?.anomaly_count]
+    [telemetry, anomalies?.length, anomalyStats?.anomaly_count]
   );
 
   const insights = useMemo(
@@ -1442,7 +1391,7 @@ export default function AIInsightPanel({
         </div>
       </div>
 
-      {/* ── Warm-up ────────────────────────────────────────────────────────── */}
+      {/* ── Warm-up ─────────────────────────────────────────────────────────── */}
       {isWarmingUp && <WarmUpBar current={minCount} target={minSamples} />}
 
       {/* ── Confidence — full-width ─────────────────────────────────────────── */}
@@ -1454,16 +1403,13 @@ export default function AIInsightPanel({
         />
       </div>
 
-      {/* ── Time-to-Act Badge ────────────────────────────────────────────────
-          Hidden when riskIndex ≤ 10. Gives operators instant urgency context. */}
+      {/* ── Time-to-Act — hidden when stable ────────────────────────────────── */}
       <TimeToActBadge etaItems={currentETAs} riskIndex={riskData?.index ?? 0} />
 
-      {/* ── Risk index + momentum ────────────────────────────────────────────
-          RiskIndexBar now renders a red ring when Critical Escalation is active */}
+      {/* ── Risk index + momentum ────────────────────────────────────────────── */}
       <RiskIndexBar riskData={riskData} momentum={momentumData} />
 
-      {/* ── Top Insight Banner — fast-path answer when riskIndex ≥ 40 ─────────
-          getShortHeadline keeps banner text concise even for anomaly-burst prose */}
+      {/* ── Top Insight Banner — riskIndex ≥ 40, concise headline + ETA chip ── */}
       <TopInsightBanner
         insights   = {insights}
         riskIndex  = {riskData?.index ?? 0}
@@ -1492,7 +1438,7 @@ export default function AIInsightPanel({
 
       <PredictiveETAPanel etas={currentETAs} />
 
-      {/* ── SECTION: Sensor Analysis ─────────────────────────────────────────── */}
+      {/* ── SECTION: Sensor Analysis — suppressed when fully stable ─────────── */}
       {hasSensorSection && <SectionLabel label="Sensor Analysis" />}
 
       <CorrelationPanel correlations={activeCorrelations} />
@@ -1502,7 +1448,7 @@ export default function AIInsightPanel({
       {showSensorDetails && <TopRiskyMetric telemetry={telemetry} />}
       {showSensorDetails && <FeatureContributors anomalies={anomalies} />}
 
-      {/* ── Priority insights ───────────────────────────────────────────────── */}
+      {/* ── Priority insights — coherent, stable, content-keyed ─────────────── */}
       <PriorityInsights insights={insights} riskIndex={riskData?.index ?? 0} />
 
       {/* ── Anomaly clusters ────────────────────────────────────────────────── */}
