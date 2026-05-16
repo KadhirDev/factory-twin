@@ -1,345 +1,254 @@
 # 🏭 Factory Twin — AI Digital Twin for Smart Factory
 
-A **production-grade, real-time industrial AI platform** that combines IoT telemetry, digital twin synchronization, and machine learning to deliver **predictive insights, anomaly detection, and decision support** for smart factory operations.
+A production-style AI-powered industrial monitoring platform that detects anomalies, predicts equipment failures, identifies root causes, and guides operator decisions in real time.
+
+Built as a full-stack portfolio project demonstrating modern AI/ML integration, async backend architecture, and a sophisticated intelligence layer.
 
 ---
 
-## 🚀 What This Project Demonstrates
+## 🎯 What This Does
 
-This is not just a dashboard — it is a **complete intelligent system**:
+Factory Twin ingests live sensor telemetry from industrial machines, runs it through an Isolation Forest ML model, and surfaces actionable insights through a multi-layer AI intelligence panel — all without human labelling.
 
-* ⚡ Real-time telemetry ingestion pipeline
-* 🧠 ML anomaly detection (Isolation Forest + fallback)
-* 🔄 Digital Twin synchronization (Eclipse Ditto)
-* 📊 AI-powered insights (client-side intelligence layer)
-* 🧭 Predictive + explainable decision support
-* 🐳 Fully containerized production-ready architecture
+**Operator experience goal:** understand what is happening, why, how urgent it is, and what to do — in under 5 seconds.
 
 ---
 
-## 🏗️ System Architecture
+## 🏗️ Architecture
+IoT Simulator ──► FastAPI Backend ──► PostgreSQL
+│
+Isolation Forest
+(async, per-machine)
+│
+Anomaly Scores + Contributors
+│
+React Frontend Intelligence Layer
+│
+┌──────────────┼──────────────┐
+Root Cause      Recommendations   Predictive ETAs
+Analysis        (ranked + scored) (linear projection)
+│                │                │
+ML-backed         Cause→Action     Metric trends
 
-```
-Factory Floor (Machines)
-   ↓
-Telemetry (HTTP / MQTT)
-   ↓
-FastAPI Backend
-   ├── PostgreSQL (DB-first persistence)
-   ├── ML Anomaly Engine (Isolation Forest)
-   ├── Alert Engine (threshold + ML)
-   ├── Eclipse Ditto (Digital Twin sync)
-   └── Kafka (optional streaming)
+Live fallback    linkage          per metric
 
-   ↓
-
-Frontend (React + Vite + Tailwind + Nginx)
-   ├── Dashboard
-   ├── Machine View
-   ├── Alerts
-   └── AI Insights Panel (client-side intelligence)
-
-   ↓
-
-Observability
-   ├── Prometheus
-   └── Grafana
-```
 
 ---
 
-## 🧠 Core Capabilities
+## 🧠 AI Intelligence Layer
 
-### 🔹 1. Real-Time IoT Pipeline
+### Anomaly Detection (Backend)
 
-* Telemetry ingestion every **2 seconds per machine**
-* Adaptive simulator with:
+- **Model:** Isolation Forest (scikit-learn) per machine
+- **Cold start:** Z-score fallback until 50 samples collected
+- **Training:** Automatic retraining every 30 samples
+- **Persistence:** Pickle-serialised models at `/app/ml_models/<machine_id>.pkl`
+- **Concurrency:** Per-machine `asyncio.Lock`, retraining in thread executor
 
-  * drift
-  * noise
-  * anomaly injection
-* DB-first architecture (no data loss)
-* Backpressure-aware ingestion
+### Frontend Intelligence (No Backend Changes Required)
 
----
-
-### 🔹 2. ML Anomaly Detection Engine
-
-| Feature     | Description                    |
-| ----------- | ------------------------------ |
-| Model       | Isolation Forest (per machine) |
-| Cold Start  | Z-score fallback               |
-| Training    | After 50 samples               |
-| Retraining  | Every 30 new samples           |
-| Scaling     | StandardScaler                 |
-| Persistence | Saved to disk (`/ml_models`)   |
-| Concurrency | Async-safe with locks          |
-
-✔ Fully automatic lifecycle
-✔ No manual intervention required
+| Component | What it does |
+|---|---|
+| **Predictive ETA** | Linear slope extrapolation to warn/critical threshold per metric |
+| **Correlation Detection** | Detects simultaneous rising trends across metric pairs |
+| **Anomaly Frequency** | Compares recent vs older half of window for trend direction |
+| **Confidence Scoring** | 7-signal model: sample maturity, model type, variance, score trend, anomaly consistency, correlation agreement, oscillation penalty |
+| **Risk Index** | Composite: anomaly score (40pts) + frequency (30pts) + ETA urgency (30pts) |
+| **Risk Momentum** | 3 signals → Stabilizing / Stable / Worsening / Critical Escalation |
+| **Root Cause Analysis** | ML-backed path (stored contributors) + live threshold fallback |
+| **Recommendations** | 13 deterministic rules, scored by urgency × ETA × correlation × confidence |
+| **Stale Telemetry Detection** | Client-side timestamp age tracking; degrades confidence after 15s, shows offline state after 60s |
 
 ---
 
-### 🔹 3. AI Intelligence Layer (Frontend)
+## 🛠️ Tech Stack
 
-> ⚠️ Runs entirely on **client-side using existing API data**
-> No additional backend endpoints
+### Backend
+- **FastAPI** — async REST API
+- **PostgreSQL** — telemetry + anomaly storage
+- **SQLAlchemy** (async) — ORM with idempotent migrations
+- **scikit-learn** — Isolation Forest anomaly detection
+- **JWT + RBAC** — auth with 4 roles (admin / engineer / operator / viewer)
+- **Prometheus** — metrics endpoint
 
-#### Components
+### Frontend
+- **React 18** + **Vite**
+- **TailwindCSS**
+- **Recharts** — sparklines and trend charts
+- **date-fns** — timestamp utilities
+- **lucide-react** — icons
 
-* **Confidence Score**
-
-  * 7-signal evaluation system
-* **Risk Index (0–100)**
-
-  * anomaly score + frequency + ETA
-* **Risk Momentum**
-
-  * Stable → Improving → Worsening → Critical Escalation
-* **Root Cause Analysis**
-
-  * Ranked causal inference
-* **Recommendation Engine**
-
-  * Action prioritization + impact analysis
-* **Predictive ETA**
-
-  * Time to threshold breach
-* **Correlation Detection**
-
-  * Multi-metric anomaly relationships
-* **Anomaly Frequency Tracking**
-* **Priority Insights Filtering**
-
-👉 This transforms raw data into **actionable intelligence**
+### Infrastructure
+- **Docker Compose** — all services containerised
+- **Nginx** — SPA serving + `/api/` proxy
+- **Prometheus + Grafana** — optional observability stack
 
 ---
 
-### 🔹 4. Explainability & Fallback System
-
-* ML unavailable → fallback to **threshold-based reasoning**
-* “Why?” explanation panel
-* Evidence-based reasoning (metrics + trends)
-* No black-box outputs
-
----
-
-### 🔹 5. Alerts System
-
-* Threshold + ML-driven alerts
-* Severity levels:
-
-  * normal
-  * warning
-  * critical
-* Acknowledgement flow
-* Analytics (trend + distribution)
-
----
-
-### 🔹 6. Digital Twin Integration
-
-* Eclipse Ditto synchronization
-* Real-time machine state representation
-* Backend → twin → frontend consistency
-
----
-
-### 🔹 7. Observability
-
-* Prometheus metrics endpoint
-* Grafana dashboards
-* Tracks:
-
-  * ingestion rate
-  * anomaly scores
-  * alert trends
-  * latency
-
----
-
-## 🧪 System Status (Current)
-
-✔ Backend: Stable
-✔ ML Pipeline: Active (Isolation Forest)
-✔ Frontend: Fully functional
-✔ AI Insights: Integrated and validated
-✔ Docker Deployment: Working
-✔ Runtime Errors: None
-
-👉 **Production-ready development baseline achieved**
-
----
-
-## ⚙️ Tech Stack
-
-| Layer         | Technology                      |
-| ------------- | ------------------------------- |
-| Backend       | FastAPI + SQLAlchemy + asyncpg  |
-| Database      | PostgreSQL                      |
-| ML            | scikit-learn (Isolation Forest) |
-| Frontend      | React + Vite + Tailwind         |
-| Digital Twin  | Eclipse Ditto                   |
-| Messaging     | Kafka (optional)                |
-| Observability | Prometheus + Grafana            |
-| Auth          | JWT + RBAC                      |
-| Deployment    | Docker Compose + Nginx          |
-
----
-
-## 🐳 Getting Started
+## 🚀 Quick Start
 
 ### Prerequisites
 
-* Docker Desktop (WSL2 recommended)
+- Docker Desktop
+- Docker Compose v2
 
----
-
-### Run the System
-
-```bash
-git clone <repo-url>
-cd factory-twin
-
-docker compose -f docker-compose.factory.yml up -d --build
-```
-
----
-
-### Verify
+### Start all services
 
 ```bash
-docker ps --filter "name=factory"
+docker compose -f docker-compose.factory.yml up -d
 ```
-
----
 
 ### Access
 
-| Service    | URL                                                      |
-| ---------- | -------------------------------------------------------- |
-| Frontend   | [http://localhost:5173](http://localhost:5173)           |
-| API Docs   | [http://localhost:8000/docs](http://localhost:8000/docs) |
-| Grafana    | [http://localhost:3001](http://localhost:3001)           |
-| Prometheus | [http://localhost:9091](http://localhost:9091)           |
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:5173 |
+| Backend API | http://localhost:8000/docs |
+| Grafana | http://localhost:3001 |
+| Prometheus | http://localhost:9091 |
 
----
+### Default credentials
 
-## 🧩 Key UI Features
+| Role | Username | Password |
+|---|---|---|
+| Admin | admin | admin123 |
+| Engineer | engineer | engineer123 |
+| Operator | operator | operator123 |
+| Viewer | viewer | viewer123 |
 
-### Dashboard
+### Rebuild frontend only
 
-* Fleet health summary
-* Machine ranking by anomaly score
-* Real-time sparklines
-
-### Machine View
-
-* Live telemetry
-* AI Insights panel
-* Anomaly status card
-* Digital twin viewer
-
-### Alerts
-
-* Trend analysis
-* Distribution analytics
-* Acknowledgement system
-
----
-
-## 🎬 Demo Flow
-
-### Normal State
-
-* Low risk
-* Stable metrics
-* No alerts
-
-### ML Activation
-
-* Model trains at 50 samples
-* Confidence increases
-
-### Anomaly
-
-* Score spikes (> 2.8σ)
-* Risk increases
-* Root cause identified
-* Recommendations generated
-
-### Sustained Issue
-
-* Critical escalation triggered
-* Priority insights shown
-* Frequency increases
+```powershell
+docker compose -f docker-compose.factory.yml build factory-frontend
+docker compose -f docker-compose.factory.yml up -d factory-frontend
+docker logs factory-frontend --tail 20
+```
 
 ---
 
 ## 📁 Project Structure
-
-```
-backend/
-frontend/
-simulator/
-observability/
-docker-compose.factory.yml
-```
-
-(organized into modular services)
-
----
-
-## 🔑 Default Credentials
-
-| User     | Password    |
-| -------- | ----------- |
-| admin    | admin123    |
-| engineer | engineer123 |
-| operator | operator123 |
-| viewer   | viewer123   |
-
----
-
-## 🧠 Engineering Highlights
-
-* Async-safe ML pipeline (no race conditions)
-* Client-side AI intelligence (low backend load)
-* Graceful degradation (fallback logic)
-* DB-first ingestion (no data loss)
-* Fully containerized system
-
----
-
-## 🚀 Future Enhancements
-
-* Predictive failure modeling (advanced ML)
-* Model explainability (SHAP / feature importance)
-* Frontend performance optimization
-* Cloud deployment (Kubernetes)
-* Real IoT device integration
+factory-twin/
+├── backend/
+│   └── app/
+│       ├── main.py                  # FastAPI app, lifespan, CORS
+│       ├── config.py                # Settings
+│       ├── database.py              # Async engine, pool, migrations
+│       ├── models/                  # SQLAlchemy models
+│       ├── schemas/                 # Pydantic v2 schemas
+│       ├── routers/                 # machines, telemetry, alerts, auth
+│       └── services/
+│           ├── ml_anomaly_service.py    # Isolation Forest pipeline
+│           ├── alert_service.py
+│           ├── ditto_service.py
+│           └── auth_service.py
+├── frontend/
+│   └── src/
+│       ├── components/
+│       │   ├── AIInsightPanel.jsx       # Main intelligence orchestrator
+│       │   ├── RootCausePanel.jsx       # ML-backed + live fallback
+│       │   ├── RecommendationCard.jsx   # Ranked action engine
+│       │   ├── RiskMomentumBadge.jsx    # 5-level momentum display
+│       │   └── ConfidenceBadge.jsx      # 7-signal confidence
+│       ├── hooks/
+│       │   ├── useStableInsights.js     # Insight list stability
+│       │   └── useTelemetryAge.js       # Stale telemetry detection
+│       ├── pages/
+│       │   ├── Dashboard.jsx            # Fleet overview
+│       │   └── MachineView.jsx          # Per-machine 4-tab view
+│       └── context/
+│           ├── AuthContext.jsx
+│           └── TelemetryContext.jsx
+├── docker-compose.factory.yml
+└── README.md
 
 ---
 
-## ⚠️ Important Notes
+## 🎬 Demo Walkthrough
 
-Avoid destructive Docker commands:
+### 1. Normal State
+Open any machine's AI Insights tab. With stable telemetry:
+- Confidence badge shows score and model type
+- Risk Index shows "Normal" with green momentum
+- Signal Insights shows "All metrics within normal ranges"
+- Sensor Analysis section is suppressed (no noise)
 
-```
-docker system prune -a
-docker volume prune
-docker compose down -v
-```
+### 2. Anomaly Escalation
+The simulator injects anomalies automatically. Watch:
+- `TimeToActBadge` appears: **Act Urgently** → **Immediate Action Required**
+- `TopInsightBanner` surfaces the highest-priority condition
+- `RootCausePanel` switches from amber (live threshold) to indigo (ML-backed) once anomaly records accumulate
+- `RecommendationCard` ranks actions with cause → action linkage
+- `RiskMomentumBadge` transitions: Stable → Worsening → Critical Escalation
+- Critical Escalation: `RiskIndexBar` grows a red ring + "All signals active" pulse
 
-Use project-specific commands only.
+### 3. Explainability
+Click **Why?** on any Signal Insight row to expand contributing signals:
+- Measurement value vs threshold
+- Trend direction
+- ETA projection
+- Anomaly count + peak score
+
+### 4. Root Cause
+`RootCausePanel` shows:
+- **Indigo (ML-backed):** top contributor metrics by σ deviation, ranked causal rules, corroborating correlation evidence, alternative causes
+- **Amber (live fallback):** threshold breach analysis when no stored ML anomaly exists yet
+
+### 5. Recovery
+As the simulator stabilises:
+- `RiskMomentumBadge` shows **Stabilizing** → **Recovering**
+- `TimeToActBadge` fades: Urgent → Soon → hidden
+- Sensor Analysis panels suppress when riskIndex drops below 10
+
+### 6. Stale Telemetry
+Stop the simulator. After 15 seconds, an amber **Telemetry Delayed** banner appears. After 60 seconds, it transitions to **Machine Offline** (gray), and live-escalation UI (TimeToActBadge, TopInsightBanner) is suppressed — operators see the last known state clearly labelled rather than potentially misleading live urgency.
 
 ---
 
-## 🎯 Final Statement
+## 🔑 Key Design Decisions
 
-This project demonstrates the design and implementation of a:
+**Frontend-only intelligence:** All ETAs, correlations, frequency analysis, confidence scoring, and risk indexing run purely in the browser from existing API data. No new backend endpoints were required.
 
-> **Real-time AI-powered Digital Twin system with predictive intelligence and explainable decision support**
+**Memo correctness:** Telemetry-derived memos depend on `[telemetry]` (full reference), not `[telemetry?.length]`. This ensures ETA projections and correlations update on every poll even when the reading count stabilises.
+
+**Stable insight ordering:** `useStableInsights` prevents list reordering every 3s poll. Reorders only commit when a new critical/warning appears, a critical/warning disappears, count changes ≥2, or 8s has elapsed.
+
+**Content-based keys:** `InsightRow` uses `key={ins.text.slice(0, 50)}` rather than array index, preventing React from transferring expanded "Why?" state between rows during list updates.
+
+**Null safety:** All timestamp parsing is wrapped in try/catch. `FeatureContributors` uses a triple fallback: `c.label ?? c.metric ?? "Sensor"`. `AnomalyClusters` filters out invalid timestamps before sorting to prevent NaN-based sort instability.
 
 ---
 
+## 🔐 Authentication
+
+JWT-based with role-based UI gating:
+
+- **Admin / Engineer:** full access including AI Insights tab
+- **Operator:** Combined + Anomalies tabs
+- **Viewer:** read-only dashboard
+
+---
+
+## 📊 API Endpoints (Key)
+POST /api/telemetry/ingest          # IoT reading ingestion
+GET  /api/telemetry/{id}/latest     # Latest reading per machine
+GET  /api/telemetry/{id}/anomalies  # Anomaly records
+GET  /api/telemetry/{id}/anomaly-stats # Stats + score trend + config
+GET  /api/machines/                 # Fleet list
+GET  /api/alerts/                   # Active alerts
+POST /api/auth/login                # JWT token
+
+---
+
+## 🧪 Known Non-Blocking Items
+
+These are deferred and do not affect functionality:
+
+- Large JS bundle (~800KB) — code splitting not yet applied
+- Vite CJS interop warning
+- PostCSS module type warning
+
+---
+
+## 📄 License
+
+MIT

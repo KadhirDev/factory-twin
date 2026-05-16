@@ -20,6 +20,7 @@ import {
   ChevronDown,
   ChevronUp,
   Gauge,
+  WifiOff,
 } from "lucide-react";
 import {
   LineChart,
@@ -34,6 +35,7 @@ import RecommendationCard         from "./RecommendationCard";
 import ConfidenceBadge            from "./ConfidenceBadge";
 import RiskMomentumBadge, { computeMomentumLevel } from "./RiskMomentumBadge";
 import { useStableInsights }      from "../hooks/useStableInsights";
+import { useTelemetryAge }        from "../hooks/useTelemetryAge";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONFIGURATION
@@ -392,15 +394,15 @@ function generateInsights(telemetry = [], anomalies = [], anomalyStats = null) {
       type: "critical", icon: Zap, priority: 2,
       text: `High anomaly rate: ${safeAnoms.length} recent anomalies (${anomRate}%, peak ${topScore.toFixed(2)}σ).`,
       signals: [
-        { type: "anomaly",     text: `${safeAnoms.length} anomalous ML readings in current window` },
-        { type: "score",       text: `Peak ML anomaly score: ${topScore.toFixed(2)}σ (alert threshold: 2.8σ)` },
+        { type: "anomaly",     text: `${safeAnoms.length} anomalous readings in current window` },
+        { type: "score",       text: `Peak anomaly score: ${topScore.toFixed(2)}σ (alert threshold: 2.8σ)` },
         { type: "measurement", text: `Anomaly rate: ${anomRate}% of recent samples` },
       ],
     });
   } else if (safeAnoms.length >= 2) {
     insights.push({
       type: "warning", icon: Zap, priority: 4,
-      text: `${safeAnoms.length} anomalies recently (${anomRate}%) — monitor sensor patterns.`,
+      text: `${safeAnoms.length} anomalies detected recently (${anomRate}%) — monitor sensor patterns.`,
       signals: [
         { type: "anomaly", text: `${safeAnoms.length} anomalous readings detected in current window` },
         { type: "score",   text: `Anomaly rate: ${anomRate}% — recurrence confirms a persistent pattern` },
@@ -409,10 +411,10 @@ function generateInsights(telemetry = [], anomalies = [], anomalyStats = null) {
   } else if (safeAnoms.length === 1) {
     insights.push({
       type: "info", icon: AlertTriangle, priority: 7,
-      text: "1 anomaly detected recently — isolated event, monitor for recurrence.",
+      text: "1 anomaly detected — isolated event, monitor for recurrence.",
       signals: [
-        { type: "anomaly", text: "One anomalous ML reading in the current window" },
-        { type: "score",   text: "Single occurrence — could be transient noise; watch for recurrence" },
+        { type: "anomaly", text: "One anomalous reading in the current window" },
+        { type: "score",   text: "Single occurrence — may be transient; watch for recurrence" },
       ],
     });
   }
@@ -423,7 +425,7 @@ function generateInsights(telemetry = [], anomalies = [], anomalyStats = null) {
       text: "All metrics within normal operating ranges. No anomalies detected.",
       signals: [
         { type: "measurement", text: "All sensor readings are within defined safe thresholds" },
-        { type: "anomaly",     text: "No anomalous ML scores detected in the current window" },
+        { type: "anomaly",     text: "No anomalous readings detected in the current window" },
       ],
     });
   }
@@ -583,14 +585,12 @@ function getShortHeadline(insight) {
     const count = match ? match[1] : "";
     return count
       ? `${count} anomalies detected in current window — ML scoring elevated.`
-      : "Elevated ML anomaly rate detected in current window.";
+      : "Elevated anomaly rate detected in current window.";
   }
-  if (insight.icon === Zap && /^\d+ anomalies recently/.test(text)) {
-    const match = text.match(/^(\d+) anomalies recently/);
+  if (insight.icon === Zap && /^\d+ anomalies/.test(text)) {
+    const match = text.match(/^(\d+) anomalies/);
     const count = match ? match[1] : "";
-    return count
-      ? `${count} recent anomalies — sensor patterns require monitoring.`
-      : text;
+    return count ? `${count} anomalies detected — sensor patterns require monitoring.` : text;
   }
 
   if (text.length <= 65) return text;
@@ -603,6 +603,7 @@ function getShortHeadline(insight) {
 // SUB-COMPONENTS
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── SectionLabel ──────────────────────────────────────────────────────────────
 function SectionLabel({ label }) {
   return (
     <div className="flex items-center gap-3 my-5">
@@ -615,6 +616,47 @@ function SectionLabel({ label }) {
   );
 }
 
+// ── StaleTelemetryBanner ──────────────────────────────────────────────────────
+// Shown when telemetry has not arrived in > 15s.
+// Offline (> 60s): gray, neutral — suppresses escalation UI.
+// Delayed (15–60s): amber, subtle — keeps all panels active.
+function StaleTelemetryBanner({ isDelayed, isOffline, ageLabel }) {
+  if (!isDelayed && !isOffline) return null;
+
+  if (isOffline) {
+    return (
+      <div className="flex items-center gap-3 rounded-xl border border-gray-300 bg-gray-50 px-4 py-3 mb-4">
+        <WifiOff size={14} className="text-gray-400 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-bold text-gray-500">Machine Offline</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">
+            Last telemetry received {ageLabel}. Panels below reflect the last known machine state.
+          </p>
+        </div>
+        <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-200 text-gray-500 border border-gray-300 uppercase">
+          Offline
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 mb-4">
+      <Clock size={13} className="text-amber-500 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-semibold text-amber-700">Telemetry Delayed</p>
+        <p className="text-[10px] text-amber-500 mt-0.5">
+          Last reading {ageLabel}. Data may not reflect current machine state.
+        </p>
+      </div>
+      <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-600 border border-amber-300 uppercase">
+        Delayed
+      </span>
+    </div>
+  );
+}
+
+// ── TimeToActBadge ─────────────────────────────────────────────────────────────
 function TimeToActBadge({ etaItems, riskIndex }) {
   const cfg = deriveUrgencyLabel(etaItems, riskIndex);
   if (!cfg) return null;
@@ -631,6 +673,7 @@ function TimeToActBadge({ etaItems, riskIndex }) {
   );
 }
 
+// ── TopInsightBanner ───────────────────────────────────────────────────────────
 function TopInsightBanner({ insights, riskIndex, minCritETA }) {
   if ((riskIndex ?? 0) < 40) return null;
   if (!insights?.length) return null;
@@ -684,6 +727,7 @@ function TopInsightBanner({ insights, riskIndex, minCritETA }) {
   );
 }
 
+// ── SignalRow ─────────────────────────────────────────────────────────────────
 function SignalRow({ signal, textColor }) {
   const Icon = SIGNAL_ICONS[signal.type] || Activity;
   return (
@@ -694,6 +738,7 @@ function SignalRow({ signal, textColor }) {
   );
 }
 
+// ── InsightRow ────────────────────────────────────────────────────────────────
 function InsightRow({ insight }) {
   const [showSignals, setShowSignals] = useState(false);
 
@@ -751,6 +796,7 @@ function InsightRow({ insight }) {
   );
 }
 
+// ── WarmUpBar ─────────────────────────────────────────────────────────────────
 function WarmUpBar({ current, target }) {
   const pct = Math.min(100, Math.round((current / target) * 100));
   return (
@@ -766,6 +812,7 @@ function WarmUpBar({ current, target }) {
   );
 }
 
+// ── DetectorBadge ─────────────────────────────────────────────────────────────
 function DetectorBadge({ detectorType, mlModelReady }) {
   const isML = detectorType === "isolation_forest" || mlModelReady;
   return (
@@ -777,6 +824,7 @@ function DetectorBadge({ detectorType, mlModelReady }) {
   );
 }
 
+// ── SeverityBadge ─────────────────────────────────────────────────────────────
 function SeverityBadge({ score }) {
   const sev = getSeverity(score);
   if (!sev) return null;
@@ -787,6 +835,7 @@ function SeverityBadge({ score }) {
   );
 }
 
+// ── TopRiskyMetric ────────────────────────────────────────────────────────────
 function TopRiskyMetric({ telemetry }) {
   const latest = (telemetry || [])[0];
   if (!latest) return null;
@@ -823,7 +872,8 @@ function TopRiskyMetric({ telemetry }) {
   );
 }
 
-// Null-safe: filters out entries with missing or unparseable timestamps before sorting.
+// ── AnomalyClusters ───────────────────────────────────────────────────────────
+// Null-safe: filters entries with missing/invalid timestamps before sorting.
 function AnomalyClusters({ anomalies }) {
   const clusters = useMemo(() => {
     const safe = (anomalies || [])
@@ -889,6 +939,7 @@ function AnomalyClusters({ anomalies }) {
   );
 }
 
+// ── ScoreTrendPanel ───────────────────────────────────────────────────────────
 function ScoreTrendPanel({ scoreTrend }) {
   if (!scoreTrend || !scoreTrend.scores?.length) return null;
   const { trend, recent_avg, peak_score, scores } = scoreTrend;
@@ -924,7 +975,8 @@ function ScoreTrendPanel({ scoreTrend }) {
   );
 }
 
-// Null-safe: triple fallback label prevents "undefined" rendering.
+// ── FeatureContributors ───────────────────────────────────────────────────────
+// Null-safe: triple fallback label prevents "undefined" from rendering.
 function FeatureContributors({ anomalies = [] }) {
   const recent = (anomalies || []).find((a) => a.anomaly_details?.top_contributors?.length > 0);
   if (!recent) return null;
@@ -970,6 +1022,7 @@ function FeatureContributors({ anomalies = [] }) {
   );
 }
 
+// ── PredictiveETAPanel ────────────────────────────────────────────────────────
 function PredictiveETAPanel({ etas }) {
   if (!etas?.length) return null;
   return (
@@ -1033,6 +1086,7 @@ function PredictiveETAPanel({ etas }) {
   );
 }
 
+// ── CorrelationPanel ──────────────────────────────────────────────────────────
 function CorrelationPanel({ correlations }) {
   if (!correlations?.length) return null;
   return (
@@ -1070,8 +1124,8 @@ function CorrelationPanel({ correlations }) {
   );
 }
 
+// ── AnomalyFrequencyPanel ─────────────────────────────────────────────────────
 function AnomalyFrequencyPanel({ telemetry }) {
-  // Computed inline rather than via useMemo to ensure fresh data on every render
   const freq = useMemo(() => computeAnomalyFrequency(telemetry), [telemetry]);
   if (!freq || (freq.ratePerHour === 0 && freq.recentCount === 0)) return null;
   const trendColor = freq.trend === "increasing" ? "text-red-600" : freq.trend === "decreasing" ? "text-green-600" : "text-gray-500";
@@ -1101,15 +1155,16 @@ function AnomalyFrequencyPanel({ telemetry }) {
       </div>
       <p className="text-xs text-gray-500 mt-2 italic">
         {freq.trend === "increasing"
-          ? "Anomaly events are becoming more frequent — system instability may be worsening."
+          ? "Anomaly frequency is increasing — system instability may be worsening."
           : freq.trend === "decreasing"
-          ? "Anomaly events are reducing — system appears to be stabilising."
+          ? "Anomaly frequency is decreasing — system appears to be stabilising."
           : "Anomaly frequency is stable."}
       </p>
     </div>
   );
 }
 
+// ── RiskIndexBar ──────────────────────────────────────────────────────────────
 function RiskIndexBar({ riskData, momentum }) {
   if (!riskData) return null;
   const { index, breakdown, level } = riskData;
@@ -1166,7 +1221,9 @@ function RiskIndexBar({ riskData, momentum }) {
   );
 }
 
-// PriorityInsights: content-based key prevents "Why?" state transfer between rows.
+// ── PriorityInsights ──────────────────────────────────────────────────────────
+// content-based key `ins.text.slice(0, 50)` prevents "Why?" state transferring
+// between rows when useStableInsights commits a list reorder.
 const DEFAULT_VISIBLE   = 3;
 const TYPE_WEIGHT       = { critical: 0, warning: 1, info: 2, ok: 3 };
 const CONFIDENCE_WEIGHT = { High: 0, Moderate: 1, Low: 2 };
@@ -1260,10 +1317,13 @@ export default function AIInsightPanel({
   anomalyStats = null,
   machineName  = "Machine",
 }) {
-  // ── Content-aware memos — use `telemetry` (not `telemetry?.length`) so these
-  //    recompute when sensor values change even if the reading count stays stable.
-  //    All three functions are fast pure computations; recomputing every 3s poll
-  //    costs microseconds and ensures ETAs, correlations, and frequency stay current.
+  // ── Stale telemetry detection ────────────────────────────────────────────────
+  // Ticks every second client-side. No backend changes required.
+  // Uses the timestamp of the newest telemetry reading to derive freshness state.
+  const { isDelayed, isOffline, isStale, ageLabel } = useTelemetryAge(telemetry);
+
+  // ── Content-aware memos — use `telemetry` so these recompute when sensor
+  //    values change even if the reading count stays stable (window full).
   const activeCorrelations = useMemo(
     () => detectCorrelations(telemetry),
     [telemetry]
@@ -1302,8 +1362,6 @@ export default function AIInsightPanel({
     [anomalyStats?.score_trend?.trend, currentETAs?.length, freqData?.trend]
   );
 
-  // rawInsights also uses the full telemetry reference so insights update on
-  // every poll when sensor values change (not just when count changes).
   const rawInsights = useMemo(
     () => generateInsights(telemetry, anomalies, anomalyStats),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1364,6 +1422,11 @@ export default function AIInsightPanel({
   const critCount = insights.filter((i) => i.type === "critical").length;
   const warnCount = insights.filter((i) => i.type === "warning").length;
 
+  // When offline, suppress live-escalation UI to avoid misleading operators.
+  // Existing anomaly records, insight history, and risk data remain visible
+  // below the StaleTelemetryBanner as "last known state" context.
+  const suppressLiveEscalation = isOffline;
+
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow p-5">
 
@@ -1373,14 +1436,19 @@ export default function AIInsightPanel({
           <Brain size={18} className="text-indigo-500" />
           <span className="text-sm font-bold text-gray-700">AI Insights</span>
           <span className="text-xs text-gray-400">— {machineName}</span>
-          {critCount > 0 && (
+          {critCount > 0 && !suppressLiveEscalation && (
             <span className="text-xs font-semibold bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
               {critCount} critical
             </span>
           )}
-          {warnCount > 0 && (
+          {warnCount > 0 && !suppressLiveEscalation && (
             <span className="text-xs font-semibold bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
               {warnCount} warning
+            </span>
+          )}
+          {isOffline && (
+            <span className="text-xs font-semibold bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full border border-gray-300">
+              Last known state
             </span>
           )}
         </div>
@@ -1391,30 +1459,47 @@ export default function AIInsightPanel({
         </div>
       </div>
 
+      {/* ── Stale telemetry banner — appears when last reading is >15s old ──────
+          Offline (>60s): gray, suppresses escalation badges below.
+          Delayed (15–60s): amber, keeps all panels active.               */}
+      <StaleTelemetryBanner
+        isDelayed = {isDelayed}
+        isOffline = {isOffline}
+        ageLabel  = {ageLabel}
+      />
+
       {/* ── Warm-up ─────────────────────────────────────────────────────────── */}
       {isWarmingUp && <WarmUpBar current={minCount} target={minSamples} />}
 
-      {/* ── Confidence — full-width ─────────────────────────────────────────── */}
+      {/* ── Confidence — full-width, with warmup annotation ─────────────────── */}
       <div className="mb-4">
         <ConfidenceBadge
-          score  = {confidenceData.score}
-          label  = {confidenceData.label}
-          detail = {confidenceData.detail}
+          score       = {confidenceData.score}
+          label       = {confidenceData.label}
+          detail      = {confidenceData.detail}
+          isWarmingUp = {isWarmingUp}
         />
       </div>
 
-      {/* ── Time-to-Act — hidden when stable ────────────────────────────────── */}
-      <TimeToActBadge etaItems={currentETAs} riskIndex={riskData?.index ?? 0} />
+      {/* ── Time-to-Act — hidden when stable or when machine is offline ──────── */}
+      {!suppressLiveEscalation && (
+        <TimeToActBadge etaItems={currentETAs} riskIndex={riskData?.index ?? 0} />
+      )}
 
-      {/* ── Risk index + momentum ────────────────────────────────────────────── */}
-      <RiskIndexBar riskData={riskData} momentum={momentumData} />
-
-      {/* ── Top Insight Banner — riskIndex ≥ 40, concise headline + ETA chip ── */}
-      <TopInsightBanner
-        insights   = {insights}
-        riskIndex  = {riskData?.index ?? 0}
-        minCritETA = {minCritETA}
+      {/* ── Risk index — momentum ring suppressed when offline ───────────────── */}
+      <RiskIndexBar
+        riskData = {riskData}
+        momentum = {suppressLiveEscalation ? null : momentumData}
       />
+
+      {/* ── Top Insight Banner — suppressed when offline ─────────────────────── */}
+      {!suppressLiveEscalation && (
+        <TopInsightBanner
+          insights   = {insights}
+          riskIndex  = {riskData?.index ?? 0}
+          minCritETA = {minCritETA}
+        />
+      )}
 
       {/* ── SECTION: Diagnostics & Actions ─────────────────────────────────── */}
       <SectionLabel label="Diagnostics & Actions" />
@@ -1424,7 +1509,7 @@ export default function AIInsightPanel({
         correlations = {activeCorrelations}
         telemetry    = {telemetry}
         confidence   = {confidenceData}
-        liveMetrics  = {liveMetrics}
+        liveMetrics  = {suppressLiveEscalation ? null : liveMetrics}
       />
 
       <RecommendationCard
@@ -1436,9 +1521,9 @@ export default function AIInsightPanel({
         causeSummary = {causeSummary}
       />
 
-      <PredictiveETAPanel etas={currentETAs} />
+      <PredictiveETAPanel etas={suppressLiveEscalation ? [] : currentETAs} />
 
-      {/* ── SECTION: Sensor Analysis — suppressed when fully stable ─────────── */}
+      {/* ── SECTION: Sensor Analysis — suppressed when stable ───────────────── */}
       {hasSensorSection && <SectionLabel label="Sensor Analysis" />}
 
       <CorrelationPanel correlations={activeCorrelations} />
@@ -1448,7 +1533,7 @@ export default function AIInsightPanel({
       {showSensorDetails && <TopRiskyMetric telemetry={telemetry} />}
       {showSensorDetails && <FeatureContributors anomalies={anomalies} />}
 
-      {/* ── Priority insights — coherent, stable, content-keyed ─────────────── */}
+      {/* ── Priority insights ───────────────────────────────────────────────── */}
       <PriorityInsights insights={insights} riskIndex={riskData?.index ?? 0} />
 
       {/* ── Anomaly clusters ────────────────────────────────────────────────── */}
@@ -1495,6 +1580,11 @@ export default function AIInsightPanel({
       <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between text-xs text-gray-400">
         <span>Anomalies stored: <strong className="text-gray-600">{totalAnomalies}</strong></span>
         <span>Threshold: <strong className="text-gray-600">{threshold}σ</strong></span>
+        {isStale && (
+          <span className="text-gray-400 italic">
+            {isOffline ? "Offline" : "Delayed"} · {ageLabel}
+          </span>
+        )}
       </div>
     </div>
   );

@@ -1,99 +1,177 @@
 /**
  * RiskMomentumBadge
  *
- * Combines risk direction AND magnitude into a multi-level label:
- *   Critical Escalation | Rapidly Worsening | Worsening | Stable | Improving | Rapidly Improving
+ * Visualises operational risk direction and recovery state across
+ * five stable momentum levels:
  *
- * Level selection:
- *   Critical Escalation  — badCount ≥ 3 AND hasUrgentETA (all signals + imminent breach)
- *   Rapidly Worsening    — badCount ≥ 2 OR hasUrgentETA
- *   Worsening            — direction = "worsening", lower magnitude
- *   Stable               — no clear direction
- *   Improving            — goodCount < 2
- *   Rapidly Improving    — goodCount ≥ 2
+ *   critical_escalation – all worsening signals active + urgent ETA
+ *   worsening           – elevated operational deterioration
+ *   stable              – no dominant direction
+ *   stabilizing         – early recovery indicators detected
+ *   recovering          – multiple improving signals detected
+ *
+ * Exported:
+ *   computeMomentumLevel()
+ *
+ * Used by:
+ *   AIInsightPanel
+ *   escalation reinforcement logic
  */
 
 import React from "react";
 import {
-  ChevronsUp,
-  ChevronUp,
+  TrendingUp,
   Minus,
-  ChevronDown,
-  ChevronsDown,
   AlertOctagon,
+  ShieldCheck,
+  Wind,
 } from "lucide-react";
 
-const LEVELS = {
-  critical_escalation: {
-    label: "Critical Escalation",
-    icon: AlertOctagon,
-    bg: "bg-red-200",
-    border: "border-red-600",
-    text: "text-red-900",
-    pulse: true,
-  },
-  rapidly_worsening: {
-    label: "Rapidly Worsening",
-    icon: ChevronsUp,
-    bg: "bg-red-100",
-    border: "border-red-400",
-    text: "text-red-800",
-    pulse: false,
-  },
-  worsening: {
-    label: "Worsening",
-    icon: ChevronUp,
-    bg: "bg-orange-100",
-    border: "border-orange-300",
-    text: "text-orange-800",
-    pulse: false,
-  },
-  stable: {
-    label: "Stable",
-    icon: Minus,
-    bg: "bg-gray-100",
-    border: "border-gray-300",
-    text: "text-gray-600",
-    pulse: false,
-  },
-  improving: {
-    label: "Improving",
-    icon: ChevronDown,
-    bg: "bg-blue-100",
-    border: "border-blue-300",
-    text: "text-blue-800",
-    pulse: false,
-  },
-  rapidly_improving: {
-    label: "Rapidly Improving",
-    icon: ChevronsDown,
-    bg: "bg-green-100",
-    border: "border-green-300",
-    text: "text-green-800",
-    pulse: false,
-  },
-};
-
 /**
- * computeMomentumLevel
- * Exported — used by AIInsightPanel
+ * Computes operational momentum level.
+ *
+ * @param {"worsening"|"improving"|"stable"} direction
+ * @param {number} badCount
+ * @param {number} goodCount
+ * @param {boolean} hasUrgentETA
+ *
+ * @returns {
+ *   "critical_escalation"|
+ *   "worsening"|
+ *   "stable"|
+ *   "stabilizing"|
+ *   "recovering"
+ * }
  */
-export function computeMomentumLevel(direction, badCount, goodCount, hasUrgentETA) {
+export function computeMomentumLevel(
+  direction,
+  badCount,
+  goodCount,
+  hasUrgentETA
+) {
+  const safeBadCount = Number(badCount) || 0;
+  const safeGoodCount = Number(goodCount) || 0;
+
+  // Critical escalation
+  if (
+    direction === "worsening" &&
+    safeBadCount >= 3 &&
+    hasUrgentETA
+  ) {
+    return "critical_escalation";
+  }
+
+  // Elevated deterioration
   if (direction === "worsening") {
-    // 🔥 NEW: Critical escalation condition
-    if (badCount >= 3 && hasUrgentETA) return "critical_escalation";
-
-    if (badCount >= 2 || hasUrgentETA) return "rapidly_worsening";
-
     return "worsening";
   }
 
-  if (direction === "improving") {
-    return goodCount >= 2 ? "rapidly_improving" : "improving";
+  // Strong recovery trend
+  if (
+    direction === "improving" &&
+    safeGoodCount >= 2
+  ) {
+    return "recovering";
   }
 
+  // Early recovery signal
+  if (direction === "improving") {
+    return "stabilizing";
+  }
+
+  // Neutral
   return "stable";
 }
+
+// ─────────────────────────────────────────────────────────────
+// Level configuration
+// ─────────────────────────────────────────────────────────────
+
+const LEVEL_CONFIG = {
+  critical_escalation: {
+    icon: AlertOctagon,
+    label: "Critical Escalation",
+
+    bg: "bg-red-100",
+    border: "border-red-400",
+    text: "text-red-700",
+    iconColor: "text-red-600",
+
+    pulse: true,
+    glow: true,
+
+    title:
+      "All major risk signals are worsening with an urgent ETA — immediate intervention required.",
+  },
+
+  worsening: {
+    icon: TrendingUp,
+    label: "Worsening",
+
+    bg: "bg-orange-100",
+    border: "border-orange-300",
+    text: "text-orange-700",
+    iconColor: "text-orange-600",
+
+    pulse: false,
+    glow: false,
+
+    title:
+      "Multiple operational signals are trending toward elevated risk.",
+  },
+
+  stable: {
+    icon: Minus,
+    label: "Stable",
+
+    bg: "bg-gray-100",
+    border: "border-gray-300",
+    text: "text-gray-600",
+    iconColor: "text-gray-400",
+
+    pulse: false,
+    glow: false,
+
+    title:
+      "No dominant operational risk direction detected.",
+  },
+
+  stabilizing: {
+    icon: Wind,
+    label: "Stabilizing",
+
+    bg: "bg-teal-50",
+    border: "border-teal-300",
+    text: "text-teal-700",
+    iconColor: "text-teal-500",
+
+    pulse: false,
+    glow: false,
+
+    title:
+      "Initial recovery indicators detected. Operational pressure is beginning to ease.",
+  },
+
+  recovering: {
+    icon: ShieldCheck,
+    label: "Recovering",
+
+    bg: "bg-green-100",
+    border: "border-green-300",
+    text: "text-green-700",
+    iconColor: "text-green-600",
+
+    pulse: false,
+    glow: true,
+
+    title:
+      "Multiple signals are improving. The system is recovering from elevated operational risk.",
+  },
+};
+
+// ─────────────────────────────────────────────────────────────
+// Component
+// ─────────────────────────────────────────────────────────────
 
 export default function RiskMomentumBadge({
   direction = "stable",
@@ -101,17 +179,39 @@ export default function RiskMomentumBadge({
   goodCount = 0,
   hasUrgentETA = false,
 }) {
-  const key = computeMomentumLevel(direction, badCount, goodCount, hasUrgentETA);
-  const cfg = LEVELS[key] || LEVELS.stable;
+  const level = computeMomentumLevel(
+    direction,
+    badCount,
+    goodCount,
+    hasUrgentETA
+  );
+
+  const cfg = LEVEL_CONFIG[level] || LEVEL_CONFIG.stable;
   const Icon = cfg.icon;
 
   return (
     <div
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold
-        ${cfg.bg} ${cfg.border} ${cfg.text}
-        ${cfg.pulse ? "animate-pulse" : ""}`}
+      className={`
+        inline-flex items-center gap-1.5
+        rounded-full border px-2.5 py-1
+        text-xs font-semibold
+        ${cfg.bg}
+        ${cfg.border}
+        ${cfg.text}
+        ${cfg.pulse ? "animate-pulse" : ""}
+        ${cfg.glow ? "shadow-sm" : ""}
+      `}
+      title={cfg.title}
     >
-      <Icon size={12} />
+      <Icon
+        size={12}
+        className={`
+          shrink-0
+          ${cfg.iconColor}
+          ${cfg.pulse ? "animate-pulse" : ""}
+        `}
+      />
+
       {cfg.label}
     </div>
   );
