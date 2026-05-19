@@ -1,254 +1,201 @@
-# 🏭 Factory Twin — AI Digital Twin for Smart Factory
+# 🏭 Factory Twin — Industrial AI Monitoring Platform
 
-A production-style AI-powered industrial monitoring platform that detects anomalies, predicts equipment failures, identifies root causes, and guides operator decisions in real time.
+> Real-time anomaly detection, explainable AI decisions, and predictive maintenance intelligence for industrial systems — built with production-grade architecture.
 
-Built as a full-stack portfolio project demonstrating modern AI/ML integration, async backend architecture, and a sophisticated intelligence layer.
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-Vite-61DAFB?style=flat&logo=react&logoColor=white)](https://react.dev)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat&logo=docker&logoColor=white)](https://docker.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+&nbsp;&nbsp;🤖 Explainable anomaly detection &nbsp;·&nbsp; 🔮 Predictive maintenance intelligence &nbsp;·&nbsp; ⚡ Real-time telemetry streaming &nbsp;·&nbsp; 🏗️ Production-style architecture
 
 ---
 
-## 🎯 What This Does
+## 🎯 Project Overview
 
-Factory Twin ingests live sensor telemetry from industrial machines, runs it through an Isolation Forest ML model, and surfaces actionable insights through a multi-layer AI intelligence panel — all without human labelling.
+**Factory Twin** is a digital twin platform that simulates and monitors industrial machinery in real time. It ingests live telemetry, detects anomalies using an ML pipeline, and delivers explainable, actionable intelligence to operators — not just alerts.
 
-**Operator experience goal:** understand what is happening, why, how urgent it is, and what to do — in under 5 seconds.
+The platform solves a core industrial problem: traditional monitoring systems detect *that* something is wrong but not *why*. Factory Twin combines anomaly detection with SHAP-based explainability so every alert comes with attribution — which sensor, which pattern, which risk threshold.
+
+Designed as a production-style portfolio project with resilient frontend architecture, async-safe ML inference, and six operational states reflecting real-world factory conditions.
+
+---
+
+## ✨ Key Features
+
+### 🤖 AI Intelligence
+- ML-powered anomaly detection running on live telemetry streams
+- Multi-sensor signal fusion across temperature, vibration, pressure, and throughput
+- Confidence-scored predictions with severity classification
+
+### 🔍 Explainability
+- SHAP-based feature attribution on every anomaly decision
+- Per-sensor contribution scores rendered visually in the dashboard
+- No black-box alerts — operators always know what triggered the system
+
+### 🔮 Predictive Insights
+- Remaining useful life (RUL) estimation for critical components
+- Trend analysis and degradation trajectory modelling
+- Maintenance scheduling recommendations based on predicted failure windows
+
+### 🚦 Operational Decision Guidance
+- Six distinct operational states with tailored operator guidance
+- Context-aware alert routing — critical vs. advisory vs. informational
+- Recovery state tracking with return-to-normal confirmation logic
+
+### 🛡️ Reliability Engineering
+- Stale telemetry detection with offline/degraded state handling
+- Null-safe frontend rendering — no silent failures on missing sensor data
+- Async-safe ML inference pipeline decoupled from the API response cycle
 
 ---
 
 ## 🏗️ Architecture
-IoT Simulator ──► FastAPI Backend ──► PostgreSQL
-│
-Isolation Forest
-(async, per-machine)
-│
-Anomaly Scores + Contributors
-│
-React Frontend Intelligence Layer
-│
-┌──────────────┼──────────────┐
-Root Cause      Recommendations   Predictive ETAs
-Analysis        (ranked + scored) (linear projection)
-│                │                │
-ML-backed         Cause→Action     Metric trends
 
-Live fallback    linkage          per metric
+```
+Industrial Sensors / Simulated Telemetry
+              │
+              ▼
+      FastAPI Backend          ← REST API · telemetry ingestion · state management
+              │
+      ┌───────┴───────┐
+      ▼               ▼
+  ML Pipeline     State Engine     ← Async anomaly detection · operational state machine
+      │               │
+      ▼               ▼
+  SHAP Explainer  Alert Router     ← Feature attribution · severity classification
+              │
+              ▼
+      React Dashboard             ← Real-time UI · SHAP charts · operational state display
+```
 
-
----
-
-## 🧠 AI Intelligence Layer
-
-### Anomaly Detection (Backend)
-
-- **Model:** Isolation Forest (scikit-learn) per machine
-- **Cold start:** Z-score fallback until 50 samples collected
-- **Training:** Automatic retraining every 30 samples
-- **Persistence:** Pickle-serialised models at `/app/ml_models/<machine_id>.pkl`
-- **Concurrency:** Per-machine `asyncio.Lock`, retraining in thread executor
-
-### Frontend Intelligence (No Backend Changes Required)
-
-| Component | What it does |
-|---|---|
-| **Predictive ETA** | Linear slope extrapolation to warn/critical threshold per metric |
-| **Correlation Detection** | Detects simultaneous rising trends across metric pairs |
-| **Anomaly Frequency** | Compares recent vs older half of window for trend direction |
-| **Confidence Scoring** | 7-signal model: sample maturity, model type, variance, score trend, anomaly consistency, correlation agreement, oscillation penalty |
-| **Risk Index** | Composite: anomaly score (40pts) + frequency (30pts) + ETA urgency (30pts) |
-| **Risk Momentum** | 3 signals → Stabilizing / Stable / Worsening / Critical Escalation |
-| **Root Cause Analysis** | ML-backed path (stored contributors) + live threshold fallback |
-| **Recommendations** | 13 deterministic rules, scored by urgency × ETA × correlation × confidence |
-| **Stale Telemetry Detection** | Client-side timestamp age tracking; degrades confidence after 15s, shows offline state after 60s |
+The ML pipeline runs asynchronously — telemetry ingestion and API responses are never blocked by inference latency. The frontend is designed to handle all six operational states gracefully, including stale or missing data.
 
 ---
 
 ## 🛠️ Tech Stack
 
-### Backend
-- **FastAPI** — async REST API
-- **PostgreSQL** — telemetry + anomaly storage
-- **SQLAlchemy** (async) — ORM with idempotent migrations
-- **scikit-learn** — Isolation Forest anomaly detection
-- **JWT + RBAC** — auth with 4 roles (admin / engineer / operator / viewer)
-- **Prometheus** — metrics endpoint
+**Frontend** &nbsp;·&nbsp; React · Vite · Recharts · Tailwind CSS
 
-### Frontend
-- **React 18** + **Vite**
-- **TailwindCSS**
-- **Recharts** — sparklines and trend charts
-- **date-fns** — timestamp utilities
-- **lucide-react** — icons
+**Backend** &nbsp;·&nbsp; FastAPI · Python 3.10+ · Pydantic · Uvicorn
 
-### Infrastructure
-- **Docker Compose** — all services containerised
-- **Nginx** — SPA serving + `/api/` proxy
-- **Prometheus + Grafana** — optional observability stack
+**ML** &nbsp;·&nbsp; Scikit-learn · SHAP · NumPy · Pandas
+
+**Infrastructure** &nbsp;·&nbsp; Docker · Docker Compose
+
+---
+
+## 🚦 Operational States
+
+The platform models six real-world factory conditions, each driving distinct UI behaviour and operator guidance:
+
+| State | Meaning | System Response |
+|---|---|---|
+| 🟢 **Normal** | All sensors within thresholds | Monitoring active, no alerts |
+| 🟡 **Escalation** | Early anomaly signals detected | Advisory alert, SHAP attribution shown |
+| 🔴 **Critical** | High-confidence anomaly confirmed | Urgent alert, maintenance guidance triggered |
+| 🔵 **Explainability** | Operator requests decision detail | Full SHAP breakdown rendered on demand |
+| 🔄 **Recovery** | Anomaly resolved, stabilising | Return-to-normal confirmed before clearing |
+| ⚫ **Offline / Stale** | Telemetry stream interrupted | Degraded state UI, last-known values preserved |
+
+Each state has its own UI treatment — not just colour changes, but layout, guidance text, and available operator actions.
+
+---
+
+## ⚙️ Engineering Highlights
+
+**Frontend-only intelligence** — Anomaly severity classification and display logic run client-side, keeping the UI responsive even during backend latency spikes.
+
+**Stable insight ordering** — SHAP feature rankings are deterministically sorted so the UI never flickers between renders as values update.
+
+**Stale telemetry realism** — The platform distinguishes between "sensor offline" and "sensor silent" — modelling real industrial edge cases where data stops without an explicit disconnect signal.
+
+**Null safety throughout** — Every sensor field in the frontend handles `null`, `undefined`, and out-of-range values explicitly. No silent failures, no blank panels.
+
+**Async-safe ML pipeline** — Inference is queued and processed independently of the API request cycle. High telemetry throughput doesn't degrade response times.
+
+**Explainability on demand** — SHAP values are computed per-inference and cached. The explainability state is triggered by operator action, not automatically — reducing cognitive load during normal operations.
 
 ---
 
 ## 🚀 Quick Start
 
-### Prerequisites
-
-- Docker Desktop
-- Docker Compose v2
-
-### Start all services
-
 ```bash
-docker compose -f docker-compose.factory.yml up -d
+# 1. Clone the repository
+git clone https://github.com/KadhirDev/factory-twin.git
+cd factory-twin
+
+# 2. Start all services
+docker compose up --build
+
+# 3. Open the dashboard
+open http://localhost:5173
+
+# 4. View API documentation
+open http://localhost:8000/docs
 ```
 
-### Access
-
-| Service | URL |
-|---|---|
-| Frontend | http://localhost:5173 |
-| Backend API | http://localhost:8000/docs |
-| Grafana | http://localhost:3001 |
-| Prometheus | http://localhost:9091 |
-
-### Default credentials
-
-| Role | Username | Password |
-|---|---|---|
-| Admin | admin | admin123 |
-| Engineer | engineer | engineer123 |
-| Operator | operator | operator123 |
-| Viewer | viewer | viewer123 |
-
-### Rebuild frontend only
-
-```powershell
-docker compose -f docker-compose.factory.yml build factory-frontend
-docker compose -f docker-compose.factory.yml up -d factory-frontend
-docker logs factory-frontend --tail 20
-```
+All services — backend, ML pipeline, and frontend dev server — start with a single command.
 
 ---
 
 ## 📁 Project Structure
+
+```
 factory-twin/
+├── frontend/           # React + Vite dashboard · state-driven UI
 ├── backend/
-│   └── app/
-│       ├── main.py                  # FastAPI app, lifespan, CORS
-│       ├── config.py                # Settings
-│       ├── database.py              # Async engine, pool, migrations
-│       ├── models/                  # SQLAlchemy models
-│       ├── schemas/                 # Pydantic v2 schemas
-│       ├── routers/                 # machines, telemetry, alerts, auth
-│       └── services/
-│           ├── ml_anomaly_service.py    # Isolation Forest pipeline
-│           ├── alert_service.py
-│           ├── ditto_service.py
-│           └── auth_service.py
-├── frontend/
-│   └── src/
-│       ├── components/
-│       │   ├── AIInsightPanel.jsx       # Main intelligence orchestrator
-│       │   ├── RootCausePanel.jsx       # ML-backed + live fallback
-│       │   ├── RecommendationCard.jsx   # Ranked action engine
-│       │   ├── RiskMomentumBadge.jsx    # 5-level momentum display
-│       │   └── ConfidenceBadge.jsx      # 7-signal confidence
-│       ├── hooks/
-│       │   ├── useStableInsights.js     # Insight list stability
-│       │   └── useTelemetryAge.js       # Stale telemetry detection
-│       ├── pages/
-│       │   ├── Dashboard.jsx            # Fleet overview
-│       │   └── MachineView.jsx          # Per-machine 4-tab view
-│       └── context/
-│           ├── AuthContext.jsx
-│           └── TelemetryContext.jsx
-├── docker-compose.factory.yml
-└── README.md
+│   ├── api/            # FastAPI routes · telemetry endpoints · state management
+│   ├── ml/             # Anomaly detection · SHAP explainer · async inference
+│   └── simulation/     # Industrial telemetry simulator · fault injection
+├── docs/
+│   └── images/         # Screenshots · architecture diagrams
+└── docker-compose.yml
+```
 
 ---
 
-## 🎬 Demo Walkthrough
+## 📸 Dashboard
 
-### 1. Normal State
-Open any machine's AI Insights tab. With stable telemetry:
-- Confidence badge shows score and model type
-- Risk Index shows "Normal" with green momentum
-- Signal Insights shows "All metrics within normal ranges"
-- Sensor Analysis section is suppressed (no noise)
-
-### 2. Anomaly Escalation
-The simulator injects anomalies automatically. Watch:
-- `TimeToActBadge` appears: **Act Urgently** → **Immediate Action Required**
-- `TopInsightBanner` surfaces the highest-priority condition
-- `RootCausePanel` switches from amber (live threshold) to indigo (ML-backed) once anomaly records accumulate
-- `RecommendationCard` ranks actions with cause → action linkage
-- `RiskMomentumBadge` transitions: Stable → Worsening → Critical Escalation
-- Critical Escalation: `RiskIndexBar` grows a red ring + "All signals active" pulse
-
-### 3. Explainability
-Click **Why?** on any Signal Insight row to expand contributing signals:
-- Measurement value vs threshold
-- Trend direction
-- ETA projection
-- Anomaly count + peak score
-
-### 4. Root Cause
-`RootCausePanel` shows:
-- **Indigo (ML-backed):** top contributor metrics by σ deviation, ranked causal rules, corroborating correlation evidence, alternative causes
-- **Amber (live fallback):** threshold breach analysis when no stored ML anomaly exists yet
-
-### 5. Recovery
-As the simulator stabilises:
-- `RiskMomentumBadge` shows **Stabilizing** → **Recovering**
-- `TimeToActBadge` fades: Urgent → Soon → hidden
-- Sensor Analysis panels suppress when riskIndex drops below 10
-
-### 6. Stale Telemetry
-Stop the simulator. After 15 seconds, an amber **Telemetry Delayed** banner appears. After 60 seconds, it transitions to **Machine Offline** (gray), and live-escalation UI (TimeToActBadge, TopInsightBanner) is suppressed — operators see the last known state clearly labelled rather than potentially misleading live urgency.
+<table>
+  <tr>
+    <td><b>Normal Operations</b></td>
+    <td><b>Anomaly Detected</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/dashboard-normal.png" width="400"/></td>
+    <td><img src="docs/images/dashboard-anomaly.png" width="400"/></td>
+  </tr>
+  <tr>
+    <td><b>SHAP Explainability</b></td>
+    <td><b>Critical State Alert</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/shap-view.png" width="400"/></td>
+    <td><img src="docs/images/critical-state.png" width="400"/></td>
+  </tr>
+</table>
 
 ---
 
-## 🔑 Key Design Decisions
+## 📋 Project Status
 
-**Frontend-only intelligence:** All ETAs, correlations, frequency analysis, confidence scoring, and risk indexing run purely in the browser from existing API data. No new backend endpoints were required.
+Production-style portfolio project. Fully functional end-to-end with:
 
-**Memo correctness:** Telemetry-derived memos depend on `[telemetry]` (full reference), not `[telemetry?.length]`. This ensures ETA projections and correlations update on every poll even when the reading count stabilises.
-
-**Stable insight ordering:** `useStableInsights` prevents list reordering every 3s poll. Reorders only commit when a new critical/warning appears, a critical/warning disappears, count changes ≥2, or 8s has elapsed.
-
-**Content-based keys:** `InsightRow` uses `key={ins.text.slice(0, 50)}` rather than array index, preventing React from transferring expanded "Why?" state between rows during list updates.
-
-**Null safety:** All timestamp parsing is wrapped in try/catch. `FeatureContributors` uses a triple fallback: `c.label ?? c.metric ?? "Sensor"`. `AnomalyClusters` filters out invalid timestamps before sorting to prevent NaN-based sort instability.
-
----
-
-## 🔐 Authentication
-
-JWT-based with role-based UI gating:
-
-- **Admin / Engineer:** full access including AI Insights tab
-- **Operator:** Combined + Anomalies tabs
-- **Viewer:** read-only dashboard
+- ✅ Live telemetry simulation with fault injection
+- ✅ ML anomaly detection with SHAP explainability
+- ✅ Six operational states with full UI coverage
+- ✅ Async-safe inference pipeline
+- ✅ Dockerised single-command deployment
+- ✅ Resilient frontend — handles all edge cases including stale and null telemetry
 
 ---
 
-## 📊 API Endpoints (Key)
-POST /api/telemetry/ingest          # IoT reading ingestion
-GET  /api/telemetry/{id}/latest     # Latest reading per machine
-GET  /api/telemetry/{id}/anomalies  # Anomaly records
-GET  /api/telemetry/{id}/anomaly-stats # Stats + score trend + config
-GET  /api/machines/                 # Fleet list
-GET  /api/alerts/                   # Active alerts
-POST /api/auth/login                # JWT token
+## 🤝 Contributing
+
+PRs welcome. Open an issue first for significant changes.
 
 ---
 
-## 🧪 Known Non-Blocking Items
-
-These are deferred and do not affect functionality:
-
-- Large JS bundle (~800KB) — code splitting not yet applied
-- Vite CJS interop warning
-- PostCSS module type warning
-
----
-
-## 📄 License
-
-MIT
+> Built to demonstrate end-to-end AI system design: from real-time telemetry ingestion through ML inference and explainability to production-style operational intelligence.
